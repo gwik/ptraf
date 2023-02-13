@@ -1,14 +1,14 @@
 #![no_std]
 #![no_main]
 
-use aya_bpf::helpers::{bpf_get_current_pid_tgid, bpf_ktime_get_ns, bpf_probe_read_kernel};
-use aya_bpf::maps::{HashMap, PerCpuArray, PerfEventArray};
+use aya_bpf::helpers::{bpf_get_current_pid_tgid, bpf_probe_read_kernel};
+use aya_bpf::maps::{HashMap, PerfEventArray};
 use aya_bpf::BpfContext;
 use aya_bpf::{
     macros::{kprobe, kretprobe, map},
     programs::ProbeContext,
 };
-use aya_log_ebpf::debug;
+// use aya_log_ebpf::debug;
 
 use ptraf_common::types::{Channel, IpAddr, SockMsgEvent};
 
@@ -16,46 +16,42 @@ use ptraf_common::types::{Channel, IpAddr, SockMsgEvent};
 #[allow(non_snake_case)]
 #[allow(non_camel_case_types)]
 #[allow(dead_code)]
+#[allow(clippy::useless_transmute)]
+#[allow(clippy::transmute_int_to_bool)]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::unnecessary_cast)]
+#[allow(clippy::type_complexity)]
+#[allow(clippy::wrong_self_convention)]
 mod bindings;
 
-use bindings::{
-    file as File, inode as Inode, sock as Sock, sock_common as SockCommon, sock_type as SockType,
-    socket as Socket,
-};
+use bindings::{sock_common as SockCommon, socket as Socket};
 
 // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/net/socket.c
 
+/// Shared events with the userland program.
 #[map]
 static mut EVENTS: PerfEventArray<SockMsgEvent> = PerfEventArray::new(0);
 
+/// Internal temporary cache to store the socket between the probe and the return probe.
 #[map]
-static mut CACHE: HashMap<u64, *const Socket> = HashMap::with_max_entries(1 << 20, 0);
+static mut CACHE: HashMap<u64, *const Socket> = HashMap::with_max_entries(16384, 0);
 
 /// Probe for sock_sendmsg and sock_recvmsg.
 #[kprobe(name = "msg")]
 pub fn msg(ctx: ProbeContext) -> u32 {
-    match unsafe { try_msg(ctx) } {
-        Ok(ret) => ret,
-        Err(_) => 1,
-    }
+    unsafe { try_msg(ctx) }.unwrap_or(1)
 }
 
 /// Return probe for sock_sendmsg.
 #[kretprobe(name = "recvmsg_ret")]
 pub fn recv_msg_ret(ctx: ProbeContext) -> u32 {
-    match unsafe { try_msg_ret(ctx, Channel::Rx) } {
-        Ok(ret) => ret,
-        Err(_) => 1,
-    }
+    unsafe { try_msg_ret(ctx, Channel::Rx) }.unwrap_or(1)
 }
 
 /// Return probe for sock_recvmsg.
 #[kretprobe(name = "sendmsg_ret")]
 pub fn send_msg_ret(ctx: ProbeContext) -> u32 {
-    match unsafe { try_msg_ret(ctx, Channel::Tx) } {
-        Ok(ret) => ret,
-        Err(_) => 1,
-    }
+    unsafe { try_msg_ret(ctx, Channel::Tx) }.unwrap_or(1)
 }
 
 const AF_INET: u16 = 2;
@@ -100,8 +96,8 @@ unsafe fn notify(
             (local_addr, remote_addr)
         }
         AF_INET6 => {
-            let src_addr = sk_common.skc_v6_rcv_saddr;
-            let dest_addr = sk_common.skc_v6_daddr;
+            // let src_addr = sk_common.skc_v6_rcv_saddr;
+            // let dest_addr = sk_common.skc_v6_daddr;
 
             // debug!(
             //     &ctx,

@@ -69,7 +69,7 @@ impl IpAddr {
         }
     }
 
-    /// Builds an [IpAddr] from a v6 address.
+    /// Builds an [IpAddr] from a v6 address as an array of network endian `u16`.
     pub fn v6(addr: [u16; 8]) -> Self {
         Self {
             version: IpVersion::V6,
@@ -89,7 +89,6 @@ impl From<IpAddr> for std::net::IpAddr {
                 addr.into()
             }
             IpVersion::V6 => std::net::Ipv6Addr::new(
-                // TODO(gwik): check expected endianess
                 u16::from_be(ip.addr[0]),
                 u16::from_be(ip.addr[1]),
                 u16::from_be(ip.addr[2]),
@@ -127,6 +126,7 @@ pub enum SockType {
 }
 
 impl From<u16> for SockType {
+    #[inline]
     fn from(val: u16) -> Self {
         match val {
             1 => Self::Stream,
@@ -144,6 +144,7 @@ impl From<u16> for SockType {
 mod tests {
     #[cfg(feature = "user")]
     mod user {
+        #[allow(unused)]
         use super::super::SockType;
 
         #[test]
