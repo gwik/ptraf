@@ -28,7 +28,7 @@
 //!
 //! // Start a task for each CPU to read events and pass them to the function.
 //! let buffer_size = NonZeroUsize::new(1024).unwrap();
-//! let mut join_set: JoinSet<Result<(), anyhow::Error>> = program.events(buffer_size, process_events).await?;
+//! let mut join_set = program.events(buffer_size, process_events).await?;
 //!
 //! // Wait for all tasks to complete.
 //! while let Some(res) = join_set.join_next().await {

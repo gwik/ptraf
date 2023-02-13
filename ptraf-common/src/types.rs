@@ -19,7 +19,7 @@ pub struct SockMsgEvent {
     pub ret: c_int,
     /// Process ID.
     pub pid: u32,
-    /// Channel
+    /// Channel, `Rx: remote -> local`, `Tx: local -> remote`
     pub channel: Channel,
 }
 
@@ -61,7 +61,7 @@ pub enum IpVersion {
     V6 = 1,
 }
 
-/// Core types for Ip address.
+/// BPF types for Ip address.
 ///
 /// `IpAddr` is not reprensented as a V4 + V6 enum because the
 /// BPF compiler is too strict about the initialization and sees
@@ -91,7 +91,6 @@ impl IpAddr {
     }
 }
 
-/// Builds an ip from the address
 #[cfg(feature = "user")]
 impl From<IpAddr> for std::net::IpAddr {
     fn from(ip: IpAddr) -> std::net::IpAddr {
@@ -157,6 +156,7 @@ impl From<u16> for SockType {
 mod tests {
     #[cfg(feature = "user")]
     mod user {
+        /// why unused??? bug?
         #[allow(unused)]
         use super::super::SockType;
 
