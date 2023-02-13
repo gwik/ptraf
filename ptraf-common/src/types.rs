@@ -1,3 +1,5 @@
+use core::ffi::c_int;
+
 /// Event triggered on allocation of a sockfs inode for a socket.
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
@@ -13,12 +15,23 @@ pub struct SockMsgEvent {
     pub local_port: u16,
     /// Desination port (network endian).
     pub remote_port: u16,
-    /// Length of the IP payload.
-    pub len: u32,
+    /// Length of the IP payload. If negative contains and error `-errno`.
+    pub ret: c_int,
     /// Process ID.
     pub pid: u32,
     /// Channel
     pub channel: Channel,
+}
+
+impl SockMsgEvent {
+    /// Returns `Ok(size)` if the probed call was successful or `Err(errno)`.
+    pub fn packet_size(&self) -> Result<u32, i32> {
+        if self.ret >= 0 {
+            Ok(self.ret as u32)
+        } else {
+            Err(-self.ret)
+        }
+    }
 }
 
 #[repr(u8)]

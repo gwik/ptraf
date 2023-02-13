@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+use core::ffi::c_int;
+
 use aya_bpf::helpers::{bpf_get_current_pid_tgid, bpf_probe_read_kernel};
 use aya_bpf::maps::{HashMap, PerfEventArray};
 use aya_bpf::BpfContext;
@@ -25,6 +27,9 @@ use ptraf_common::types::{Channel, IpAddr, SockMsgEvent};
 mod bindings;
 
 use bindings::{sock_common as SockCommon, socket as Socket};
+
+// Force aya_log_epbf to be linked.
+const _UNUSED: usize = aya_log_ebpf::LOG_BUF_CAPACITY;
 
 // https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/net/socket.c
 
@@ -60,7 +65,7 @@ const AF_INET6: u16 = 10;
 unsafe fn notify(
     ctx: ProbeContext,
     socket: *const Socket,
-    len: u32,
+    ret: c_int,
     channel: Channel,
 ) -> Result<(), i64> {
     let sk = bpf_probe_read_kernel(&(*socket).sk)?;
@@ -125,7 +130,7 @@ unsafe fn notify(
         pid: ctx.pid(),
         local_addr,
         remote_addr,
-        len,
+        ret,
         local_port,
         remote_port,
         channel,
@@ -145,8 +150,9 @@ unsafe fn try_msg_ret(ctx: ProbeContext, channel: Channel) -> Result<u32, u32> {
         return Ok(0);
     };
 
-    let len: u32 = ctx.ret().ok_or(1u32)?;
-    match notify(ctx, socket, len, channel) {
+    let val: c_int = ctx.ret().ok_or(1u32)?;
+
+    match notify(ctx, socket, val, channel) {
         Ok(_) => Ok(0),
         Err(_) => Err(1),
     }

@@ -18,7 +18,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 let remote_addr: IpAddr = event.remote_addr.into();
                 let local_port = event.local_port;
                 let remove_port = event.remote_port;
-                let len = event.len;
+                let len = event.ret;
                 let pid = event.pid;
                 let sock_type = event.sock_type;
                 let channel = event.channel;
