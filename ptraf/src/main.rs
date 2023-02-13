@@ -29,13 +29,13 @@ async fn main() -> Result<(), anyhow::Error> {
         })
         .await?;
 
-    while let Some(res) = join_set.join_next().await {
-        let _ = res?;
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            info!("Exiting...");
+            join_set.abort_all();
+            while join_set.join_next().await.is_some() {};
+            Ok(())
+        },
+        res = join_set.join_next() => res.ok_or_else(|| anyhow::anyhow!("BPF task exited"))??,
     }
-
-    info!("Waiting for Ctrl-C...");
-    signal::ctrl_c().await?;
-    info!("Exiting...");
-
-    Ok(())
 }
