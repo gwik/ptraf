@@ -10,8 +10,13 @@ use aya_bpf::{
 };
 use aya_log_ebpf::debug;
 
-use ptraf_common::bindings;
 use ptraf_common::types::{Channel, IpAddr, SockMsgEvent};
+
+#[allow(non_upper_case_globals)]
+#[allow(non_snake_case)]
+#[allow(non_camel_case_types)]
+#[allow(dead_code)]
+mod bindings;
 
 use bindings::{
     file as File, inode as Inode, sock as Sock, sock_common as SockCommon, sock_type as SockType,
@@ -111,8 +116,8 @@ unsafe fn notify(
             //     channel.display(),
             // );
 
-            let local_addr = IpAddr::v6(sk_common.skc_v6_rcv_saddr);
-            let remote_addr = IpAddr::v6(sk_common.skc_v6_daddr);
+            let local_addr = IpAddr::v6(sk_common.skc_v6_rcv_saddr.in6_u.u6_addr16);
+            let remote_addr = IpAddr::v6(sk_common.skc_v6_daddr.in6_u.u6_addr16);
 
             (local_addr, remote_addr)
         }
@@ -120,7 +125,7 @@ unsafe fn notify(
     };
 
     let event = SockMsgEvent {
-        sock_type: SockType::Type::from(sk_type).into(),
+        sock_type: sk_type.into(),
         pid: ctx.pid(),
         local_addr,
         remote_addr,

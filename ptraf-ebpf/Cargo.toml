@@ -10,7 +10,7 @@ ptraf-common = { path = "../ptraf-common" }
 
 [[bin]]
 name = "ptraf"
-path = "src/main.rs"
+path = "src/ptraf-ebpf.rs"
 
 [profile.dev]
 opt-level = 3
