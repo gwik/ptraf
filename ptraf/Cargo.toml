@@ -1,0 +1,20 @@
+[package]
+name = "ptraf"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+aya = { version = ">=0.11", features=["async_tokio"] }
+aya-log = "0.1"
+anyhow = "1.0.68"
+env_logger = "0.10"
+log = "0.4"
+tokio = { version = "1.24", features = ["macros", "rt", "rt-multi-thread", "net", "signal", "sync"] }
+bytes = "1.4"
+
+ptraf-common = { path = "../ptraf-common", features = ["user"] }
+
+[[bin]]
+name = "ptraf"
+path = "src/main.rs"
