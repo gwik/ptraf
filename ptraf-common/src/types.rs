@@ -32,6 +32,16 @@ impl SockMsgEvent {
             Err(-self.ret)
         }
     }
+
+    #[cfg(feature = "user")]
+    pub fn local_sock_addr(&self) -> std::net::SocketAddr {
+        std::net::SocketAddr::new(self.local_addr.into(), self.local_port)
+    }
+
+    #[cfg(feature = "user")]
+    pub fn remote_sock_addr(&self) -> std::net::SocketAddr {
+        std::net::SocketAddr::new(self.remote_addr.into(), self.remote_port)
+    }
 }
 
 #[repr(u8)]
@@ -125,7 +135,7 @@ impl core::fmt::Debug for IpAddr {
 
 #[repr(u16)]
 #[non_exhaustive]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SockType {
     Unknown = 0,
     Stream = 1,
@@ -153,11 +163,10 @@ impl From<u16> for SockType {
     }
 }
 
+#[cfg(test)]
 mod tests {
     #[cfg(feature = "user")]
     mod user {
-        /// why unused??? bug?
-        #[allow(unused)]
         use super::super::SockType;
 
         #[test]
