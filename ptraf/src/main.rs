@@ -13,11 +13,11 @@ struct Args {
     #[arg(short, long, default_value_t = 250u64)]
     window_ms: u64,
 
-    /// Per thread message buffer capacity.
+    /// Per core message buffer capacity.
     #[arg(long, default_value_t = unsafe { NonZeroUsize::new_unchecked(4096) })]
     msg_buffer_capacity: NonZeroUsize,
 
-    /// Frequency of display.
+    /// Frequency of the display.
     #[arg(short, long, default_value_t = 1000)]
     freq_ms: u64,
 }
