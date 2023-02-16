@@ -5,7 +5,7 @@ use std::{
     ops::Deref,
     sync::{
         atomic::{AtomicU64, Ordering},
-        RwLock, RwLockReadGuard, TryLockError,
+        RwLock, RwLockReadGuard,
     },
     time::Duration,
 };
@@ -25,39 +25,62 @@ pub enum Interest {
 }
 
 #[derive(Debug, Default)]
+struct Counters {
+    size: AtomicU64,
+    count: AtomicU64,
+}
+
+impl Counters {
+    #[inline]
+    fn increment(&self, val: u64, count: u64) {
+        self.size.fetch_add(val, Ordering::Relaxed);
+        self.count.fetch_add(count, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn size(&self) -> u64 {
+        self.size.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Stat {
-    rx: AtomicU64,
-    tx: AtomicU64,
-    packet_count: AtomicU64,
+    rx: Counters,
+    tx: Counters,
 }
 
 impl Stat {
     #[inline]
-    pub fn with_channel(&self, channel: Channel) -> &AtomicU64 {
+    fn with_channel(&self, channel: Channel) -> &Counters {
         match channel {
             Channel::Rx => &self.rx,
             Channel::Tx => &self.tx,
         }
     }
 
-    fn add(&self, channel: Channel, val: u64) {
-        self.packet_count.fetch_add(1, Ordering::Relaxed);
-        self.with_channel(channel).fetch_add(val, Ordering::Relaxed);
+    #[inline]
+    fn increment(&self, channel: Channel, val: u64, count: u64) {
+        self.with_channel(channel).increment(val, count)
     }
 
     #[inline]
     pub fn packet_count(&self) -> u64 {
-        self.packet_count.load(Ordering::Relaxed)
+        self.tx.count() + self.rx.count()
     }
 
     #[inline]
     pub fn rx(&self) -> u64 {
-        self.rx.load(Ordering::Relaxed)
+        self.rx.size()
     }
 
     #[inline]
     pub fn tx(&self) -> u64 {
-        self.tx.load(Ordering::Relaxed)
+        self.tx.size()
     }
 
     pub fn get(&self, channel: Option<Channel>) -> u64 {
@@ -123,12 +146,21 @@ impl Segment {
         let mut rx: u64 = 0;
         let mut tx: u64 = 0;
 
+        let mut rx_n: u64 = 0;
+        let mut tx_n: u64 = 0;
+
         for msg in messages {
             if let Ok(len) = msg.packet_size() {
                 let len = len.into();
                 match msg.channel {
-                    Channel::Tx => tx += len,
-                    Channel::Rx => rx += len,
+                    Channel::Tx => {
+                        tx += len;
+                        tx_n += 1;
+                    }
+                    Channel::Rx => {
+                        rx += len;
+                        rx_n += 1;
+                    }
                 }
 
                 self.socks.insert(msg.into());
@@ -136,18 +168,20 @@ impl Segment {
                 for interest in Interest::interests_from_msg(msg) {
                     self.index
                         .entry(interest)
-                        .and_modify(|stat| stat.add(msg.channel, len))
+                        .and_modify(|stat| {
+                            stat.increment(msg.channel, len, 1);
+                        })
                         .or_insert_with(|| {
                             let stat = Stat::default();
-                            stat.add(msg.channel, len);
+                            stat.increment(msg.channel, len, 1);
                             stat
                         });
                 }
             }
         }
 
-        self.total.add(Channel::Rx, rx);
-        self.total.add(Channel::Tx, tx);
+        self.total.increment(Channel::Rx, rx, rx_n);
+        self.total.increment(Channel::Tx, tx, tx_n);
     }
 
     #[inline]
@@ -275,6 +309,8 @@ impl Store {
     }
 
     fn write_segment(&self, ts: Timestamp) -> WriteTimeSegment<'_> {
+        let ts = ts.trunc(self.window);
+
         {
             // fast path: the current segment is not outdated.
 
@@ -282,46 +318,41 @@ impl Store {
             let dequeue = &*read_guard;
 
             if let Some(segment) = dequeue.back() {
-                if segment.ts.saturating_elapsed_since(&ts) <= self.window {
+                if segment.ts == ts {
                     return WriteTimeSegment(read_guard);
                 }
             }
         };
 
-        // FIXME(gwik): readers may prevent write access.
-        match self.segments.try_write() {
-            Ok(mut write_guard) => {
-                let dequeue = &mut *write_guard;
+        let mut write_guard = self.segments.write().unwrap();
+        let dequeue = &mut *write_guard;
 
-                if let Some(segment) = dequeue.back() {
-                    // Happends if an other thread creates the new segments
-                    // after we released the read lock and before we grab the write
-                    // lock.
+        loop {
+            // slow path: create missing segments.
 
-                    if segment.ts.saturating_elapsed_since(&ts) <= self.window {
-                        // Ignoring the race condition on purpose because it's harmless.
-                        return WriteTimeSegment(self.segments.read().unwrap());
-                    }
+            let segment_ts = if let Some(segment) = dequeue.back() {
+                // Happends if an other thread creates the new segments
+                // after we released the read lock and before we grab the write
+                // lock.
+
+                if segment.ts >= ts {
+                    // Ignoring the race condition on purpose because it's harmless.
+                    drop(write_guard);
+                    return WriteTimeSegment(self.segments.read().unwrap());
                 }
+                segment.ts + self.window
+            } else {
+                ts
+            };
 
-                // We won the race to create the new segment.
-
-                let segment = TimeSegment {
-                    ts,
-                    segment: Segment::default(),
-                };
-
-                if dequeue.len() >= self.capacity {
-                    dequeue.pop_front();
-                }
-                dequeue.push_back(segment);
+            if dequeue.len() >= self.capacity {
+                dequeue.pop_front();
             }
-            Err(TryLockError::WouldBlock) => {}
-            Err(TryLockError::Poisoned(e)) => panic!("poisoned lock {}", e),
+            dequeue.push_back(TimeSegment {
+                ts: segment_ts,
+                segment: Segment::default(),
+            });
         }
-
-        // Ignoring the race condition on purpose because it's harmless.
-        WriteTimeSegment(self.segments.read().unwrap())
     }
 }
 
@@ -341,7 +372,7 @@ mod tests {
     #[test]
     fn store_batch_update_simple() {
         let window = Duration::from_millis(100);
-        let store = Store::new(window, 1 << 4);
+        let store = Store::new(window, 16);
         let clock = ClockNano::default();
         let ts = clock.now();
 
@@ -397,7 +428,7 @@ mod tests {
         assert_eq!(1, view.len());
 
         let time_segment = view.first().expect("first segment when not empty");
-        assert_eq!(time_segment.ts, ts);
+        assert_eq!(time_segment.ts, ts.trunc(window));
 
         let rx = time_segment.segment.total(Channel::Rx.into());
         let tx = time_segment.segment.total(Channel::Tx.into());
@@ -417,7 +448,7 @@ mod tests {
         );
 
         assert_eq!(
-            4 * (10 + 11 + 13),
+            4 * (10 + 11),
             time_segment
                 .segment
                 .by_interest(
@@ -427,6 +458,47 @@ mod tests {
                     None,
                 )
                 .unwrap_or(0)
+        );
+    }
+
+    #[test]
+    fn store_create_segments() {
+        let messages = vec![SockMsgEvent {
+            pid: 1,
+            channel: Channel::Tx,
+            sock_type: SockType::Stream,
+            local_addr: ptraf_common::IpAddr::v4(33),
+            local_port: 31,
+            remote_addr: ptraf_common::IpAddr::v4(32),
+            remote_port: 80,
+            ret: 10,
+        }];
+
+        let window = Duration::from_millis(100);
+        let store = Store::new(window, 16);
+
+        store.batch_update(Duration::from_millis(10).into(), &messages); // 0
+        store.batch_update(Duration::from_millis(20).into(), &messages); // 0
+        store.batch_update(Duration::from_millis(100).into(), &messages); // 1
+        store.batch_update(Duration::from_millis(101).into(), &messages); // 1
+        store.batch_update(Duration::from_millis(401).into(), &messages); // 4
+
+        let view = store.segments_view();
+
+        let times: Vec<_> = view
+            .iter()
+            .map(|TimeSegment { ts, segment }| (*ts, segment.total_packet_count()))
+            .collect();
+
+        assert_eq!(
+            times,
+            vec![
+                (Duration::ZERO.into(), 2),
+                (Duration::from_millis(100).into(), 2),
+                (Duration::from_millis(200).into(), 0),
+                (Duration::from_millis(300).into(), 0),
+                (Duration::from_millis(400).into(), 1),
+            ]
         );
     }
 }

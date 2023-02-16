@@ -1,18 +1,35 @@
-#![feature(bench_black_box)]
+use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
-use std::{sync::Arc, time::Duration};
-
+use clap::Parser;
 use log::info;
 use tokio::signal;
 
 use ptraf::{clock::ClockNano, probe::ProbeProgram, store::Store};
 
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Window duration.
+    #[arg(short, long, default_value_t = 250u64)]
+    window_ms: u64,
+
+    /// Per thread message buffer capacity.
+    #[arg(long, default_value_t = unsafe { NonZeroUsize::new_unchecked(4096) })]
+    msg_buffer_capacity: NonZeroUsize,
+
+    /// Frequency of display.
+    #[arg(short, long, default_value_t = 1000)]
+    freq_ms: u64,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     env_logger::init();
 
+    let args = Args::parse();
+
     let clock = Arc::new(ClockNano::default());
-    let store = Arc::new(Store::new(Duration::from_millis(250), 240));
+    let store = Arc::new(Store::new(Duration::from_millis(args.window_ms), 240));
 
     {
         let clock = Arc::clone(&clock);
@@ -21,7 +38,7 @@ async fn main() -> Result<(), anyhow::Error> {
         tokio::spawn(async move {
             let clock = Arc::clone(&clock);
             let mut now = clock.now();
-            let freq = Duration::from_secs(1);
+            let freq = Duration::from_millis(args.freq_ms);
             loop {
                 tokio::time::sleep(freq).await;
                 let view = store.segments_view();
@@ -76,7 +93,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let program = ProbeProgram::load()?;
     info!("BPF program loaded");
     let mut join_set = program
-        .events(4096.try_into()?, move |events, _cpu_id| {
+        .events(args.msg_buffer_capacity, move |events, _cpu_id| {
             let ts = clock.now();
 
             store.batch_update(ts, events);
