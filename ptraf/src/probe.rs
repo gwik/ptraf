@@ -127,7 +127,7 @@ impl ProbeProgram {
         // Iterate over each online CPU and spawn a task for each.
         for cpu_id in online_cpus()? {
             // Open a separate perf buffer for each CPU.
-            let mut buf = perf_array.open(cpu_id, None)?;
+            let mut buf = perf_array.open(cpu_id, Some(4096))?;
             let f = Arc::clone(&f);
             let bpf = Arc::clone(&bpf);
 
@@ -146,7 +146,12 @@ impl ProbeProgram {
                     // Wait for events.
                     let events = buf.read_events(buffers.as_mut_slice()).await?;
                     let event_buf = EventIter::new(&buffers[0..events.read]);
-                    trace!("run events callback cpu={}", cpu_id);
+                    trace!(
+                        "run events callback cpu={} read={} lost={}",
+                        cpu_id,
+                        events.read,
+                        events.lost
+                    );
                     f(event_buf, cpu_id);
                 }
             });

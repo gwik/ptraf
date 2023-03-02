@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    ops::Deref,
+    ops::{AddAssign, Deref},
     sync::{
         atomic::{AtomicU64, Ordering},
         RwLock, RwLockReadGuard,
@@ -25,12 +25,12 @@ pub enum Interest {
 }
 
 #[derive(Debug, Default)]
-struct Counters {
+struct Traffic {
     size: AtomicU64,
     count: AtomicU64,
 }
 
-impl Counters {
+impl Traffic {
     #[inline]
     fn increment(&self, val: u64, count: u64) {
         self.size.fetch_add(val, Ordering::Relaxed);
@@ -48,15 +48,61 @@ impl Counters {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Stat {
-    rx: Counters,
-    tx: Counters,
+    pub rx: u64,
+    pub rx_packet_count: u64,
+    pub tx: u64,
+    pub tx_packet_count: u64,
 }
 
 impl Stat {
+    pub fn total(&self) -> u64 {
+        self.rx + self.tx
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        *self = Self {
+            rx: self.rx + other.rx,
+            rx_packet_count: self.rx_packet_count + other.rx_packet_count,
+            tx: self.tx + other.tx,
+            tx_packet_count: self.tx_packet_count + other.tx_packet_count,
+        }
+    }
+}
+
+impl AddAssign<Stat> for Stat {
+    fn add_assign(&mut self, rhs: Stat) {
+        self.merge(&rhs)
+    }
+}
+
+impl AddAssign<&'_ Stat> for Stat {
+    fn add_assign(&mut self, rhs: &Stat) {
+        self.merge(rhs)
+    }
+}
+
+impl From<&'_ Metrics> for Stat {
+    fn from(m: &Metrics) -> Self {
+        Self {
+            rx: m.rx.size(),
+            rx_packet_count: m.rx.count(),
+            tx: m.tx.size(),
+            tx_packet_count: m.tx.count(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct Metrics {
+    rx: Traffic,
+    tx: Traffic,
+}
+
+impl Metrics {
     #[inline]
-    fn with_channel(&self, channel: Channel) -> &Counters {
+    fn with_channel(&self, channel: Channel) -> &Traffic {
         match channel {
             Channel::Rx => &self.rx,
             Channel::Tx => &self.tx,
@@ -136,8 +182,8 @@ impl Hash for Socket {
 
 #[derive(Debug, Default)]
 pub struct Segment {
-    total: Stat,
-    index: DashMap<Interest, Stat, FxBuildHasher>,
+    total: Metrics,
+    index: DashMap<Interest, Metrics, FxBuildHasher>,
     socks: DashSet<Socket, FxBuildHasher>,
 }
 
@@ -172,7 +218,7 @@ impl Segment {
                             stat.increment(msg.channel, len, 1);
                         })
                         .or_insert_with(|| {
-                            let stat = Stat::default();
+                            let stat = Metrics::default();
                             stat.increment(msg.channel, len, 1);
                             stat
                         });
@@ -194,11 +240,15 @@ impl Segment {
         self.total.packet_count()
     }
 
-    pub fn by_interest(&self, interest: &Interest, channel: Option<Channel>) -> Option<u64> {
-        self.index.get(interest).map(|stat| stat.get(channel))
+    pub fn stat_by_interest(&self, interest: &Interest) -> Option<Stat> {
+        self.index.get(interest).map(|m| (&*m).into())
     }
 
-    pub fn for_each_sock(&self, mut f: impl FnMut(&Socket)) {
+    pub fn socket_iter(&self) -> impl Iterator<Item = Socket> + '_ {
+        self.socks.iter().map(|sock| *sock)
+    }
+
+    pub fn for_each_socket(&self, mut f: impl FnMut(&Socket)) {
         self.socks.iter().for_each(|sock| f(sock.deref()));
     }
 }
@@ -265,6 +315,7 @@ impl TimeSegmentsView<'_> {
 /// The Store struct maintains a list of TimeSegment instances, with each segment representing
 /// a fixed time interval or window. The store aggregates the data within each segment and
 /// provides an overall view of the data over the entire time period covered by the store.
+#[derive(Debug)]
 pub struct Store {
     window: Duration,
     capacity: usize,
@@ -286,6 +337,10 @@ impl Store {
             capacity,
             segments: RwLock::new(deque),
         }
+    }
+
+    pub fn window(&self) -> Duration {
+        self.window
     }
 
     /// Update the store from the messages.
@@ -440,10 +495,8 @@ mod tests {
             4 * (10 + 11 + 13),
             time_segment
                 .segment
-                .by_interest(
-                    &Interest::RemoteIp(ptraf_common::IpAddr::v4(32).into()),
-                    None,
-                )
+                .stat_by_interest(&Interest::RemoteIp(ptraf_common::IpAddr::v4(32).into()),)
+                .map(|stat| stat.total())
                 .unwrap_or(0)
         );
 
@@ -451,12 +504,10 @@ mod tests {
             4 * (10 + 11),
             time_segment
                 .segment
-                .by_interest(
-                    &Interest::RemoteSocket(
-                        (IpAddr::from(ptraf_common::IpAddr::v4(32)), 80).into()
-                    ),
-                    None,
-                )
+                .stat_by_interest(&Interest::RemoteSocket(
+                    (IpAddr::from(ptraf_common::IpAddr::v4(32)), 80).into()
+                ))
+                .map(|stat| stat.total())
                 .unwrap_or(0)
         );
     }

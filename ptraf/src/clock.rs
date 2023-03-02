@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Default)]
@@ -30,17 +30,32 @@ impl From<Duration> for Timestamp {
     }
 }
 
-pub struct ClockNano(Instant);
+#[derive(Debug, Clone)]
+pub struct ClockNano {
+    start: Instant,
+    wall_time: SystemTime,
+}
+
+impl ClockNano {
+    /// Returns the wall time of the timestamp `ts` generated
+    /// from this clock.
+    pub fn wall_time(&self, ts: Timestamp) -> SystemTime {
+        self.wall_time.checked_add(ts.0).unwrap_or(self.wall_time)
+    }
+}
 
 impl Default for ClockNano {
     fn default() -> Self {
-        Self(Instant::now())
+        Self {
+            start: Instant::now(),
+            wall_time: SystemTime::now(),
+        }
     }
 }
 
 impl ClockNano {
     pub fn now(&self) -> Timestamp {
-        Timestamp(self.0.elapsed())
+        Timestamp(self.start.elapsed())
     }
 }
 

@@ -35,12 +35,12 @@ impl SockMsgEvent {
 
     #[cfg(feature = "user")]
     pub fn local_sock_addr(&self) -> std::net::SocketAddr {
-        std::net::SocketAddr::new(self.local_addr.into(), self.local_port)
+        std::net::SocketAddr::new(self.local_addr.into(), u16::from_be(self.local_port))
     }
 
     #[cfg(feature = "user")]
     pub fn remote_sock_addr(&self) -> std::net::SocketAddr {
-        std::net::SocketAddr::new(self.remote_addr.into(), self.remote_port)
+        std::net::SocketAddr::new(self.remote_addr.into(), u16::from_be(self.remote_port))
     }
 }
 

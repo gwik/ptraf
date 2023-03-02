@@ -4,7 +4,12 @@ use clap::Parser;
 use log::info;
 use tokio::signal;
 
-use ptraf::{clock::ClockNano, probe::ProbeProgram, store::Store};
+use ptraf::{
+    clock::ClockNano,
+    probe::ProbeProgram,
+    store::Store,
+    ui::{run_ui, App},
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -12,6 +17,9 @@ struct Args {
     /// Window duration.
     #[arg(short, long, default_value_t = 250u64)]
     window_ms: u64,
+    /// Number of segments to keep.
+    #[arg(short, long, default_value_t = 240usize)]
+    segment_count: usize,
 
     /// Per core message buffer capacity.
     #[arg(long, default_value_t = unsafe { NonZeroUsize::new_unchecked(4096) })]
@@ -19,7 +27,7 @@ struct Args {
 
     /// Frequency of the display.
     #[arg(short, long, default_value_t = 1000)]
-    freq_ms: u64,
+    ui_refresh_rate_ms: u64,
 }
 
 #[tokio::main]
@@ -28,9 +36,19 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let args = Args::parse();
 
-    let clock = Arc::new(ClockNano::default());
-    let store = Arc::new(Store::new(Duration::from_millis(args.window_ms), 240));
+    let clock = ClockNano::default();
+    let store = Store::new(Duration::from_millis(args.window_ms), args.segment_count);
+    let app = Arc::new(App::new(clock, store));
 
+    let ui_handle = {
+        let app = Arc::clone(&app);
+        tokio::spawn(run_ui(
+            Arc::clone(&app),
+            Duration::from_millis(args.ui_refresh_rate_ms),
+        ))
+    };
+
+    /*
     {
         let clock = Arc::clone(&clock);
         let store = Arc::clone(&store);
@@ -88,15 +106,18 @@ async fn main() -> Result<(), anyhow::Error> {
                 now = cur;
             }
         });
+
     }
+
+    */
 
     let program = ProbeProgram::load()?;
     info!("BPF program loaded");
     let mut join_set = program
         .events(args.msg_buffer_capacity, move |events, _cpu_id| {
-            let ts = clock.now();
+            let ts = app.clock().now();
 
-            store.batch_update(ts, events);
+            app.store().batch_update(ts, events);
 
             // std::hint::black_box((ts, events));
 
@@ -124,5 +145,6 @@ async fn main() -> Result<(), anyhow::Error> {
             Ok(())
         },
         res = join_set.join_next() => res.ok_or_else(|| anyhow::anyhow!("BPF task exited"))??,
+        ui_res = ui_handle => { ui_res? },
     }
 }
