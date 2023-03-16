@@ -68,61 +68,6 @@ impl App {
             sock_table.collect(ts, &self.clock, &self.store);
         }
     }
-
-    /*
-        async fn run_store(&self) {
-            let freq = Duration::from_millis(250); // TODO(gwik): config
-            let mut now = self.clock.now();
-
-            loop {
-                tokio::time::sleep(freq).await;
-                let view = self.store.segments_view();
-
-                if view.is_empty() {
-                    continue;
-                }
-
-                let cur = self.clock.now();
-                let (min_ts, val, packets) = view
-                    .iter()
-                    .rev()
-                    .take_while(|segment| {
-                        segment.ts.saturating_elapsed_since(&now) < freq + Duration::from_millis(250)
-                    })
-                    .fold((cur, 0u64, 0u64), |(_, val, packets), segment| {
-                        (
-                            segment.ts,
-                            val + segment.segment.total(None),
-                            packets + segment.segment.total_packet_count(),
-                        )
-                    });
-
-                let elapsed = min_ts.saturating_elapsed_since(&cur);
-
-                let rate = if elapsed.is_zero() {
-                    0u64
-                } else {
-                    (val as f64 / elapsed.as_secs_f64()) as u64
-                };
-
-                let packets = if elapsed.is_zero() {
-                    0u64
-                } else {
-                    (packets as f64 / elapsed.as_secs_f64()) as u64
-                };
-
-                debug!(
-                    "segments={} rate={}/s packets={}/s elapsed={:?}",
-                    view.len(),
-                    humansize::format_size(rate, humansize::DECIMAL),
-                    packets,
-                    elapsed,
-                );
-
-                now = cur;
-            }
-        }
-    */
 }
 
 #[derive(Debug, Clone)]
