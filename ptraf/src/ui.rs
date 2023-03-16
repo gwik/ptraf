@@ -11,6 +11,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::stream::StreamExt;
+use humansize::ToF64;
 use tui::widgets::{Cell, Table};
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -244,6 +245,7 @@ fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
     let header_cells = [
         "local".to_string(),
         "remote".to_string(),
+        "type".to_string(),
         "last activity".to_string(),
         "pid".to_string(),
         format!("rx/s [{:?}]", rate_duration.unwrap_or_default()),
@@ -259,6 +261,7 @@ fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
         let cells = [
             Cell::from(datapoint.socket.local.to_string()),
             Cell::from(datapoint.socket.remote.to_string()),
+            Cell::from(datapoint.socket.sock_type.to_string()),
             Cell::from(format!(
                 "{:?}",
                 now.duration_since(datapoint.last_activity)
@@ -277,8 +280,9 @@ fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
         .highlight_style(selected_style)
         .highlight_symbol(">> ")
         .widths(&[
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Min(10),
             Constraint::Percentage(15),
             Constraint::Percentage(10),
             Constraint::Percentage(10),

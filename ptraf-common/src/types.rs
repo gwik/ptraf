@@ -163,6 +163,23 @@ impl From<u16> for SockType {
     }
 }
 
+#[cfg(feature = "user")]
+impl ToString for SockType {
+    fn to_string(&self) -> String {
+        match self {
+            Self::Unknown => "Unknown",
+            Self::Stream => "Stream",
+            Self::Dgram => "Datagram",
+            Self::Raw => "Raw",
+            Self::Rdm => "RDM",
+            Self::Seqpacket => "Seqpacket",
+            Self::Dccp => "DCCP",
+            Self::Packet => "Packet",
+        }
+        .to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(feature = "user")]
