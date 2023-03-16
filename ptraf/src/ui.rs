@@ -11,6 +11,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::stream::StreamExt;
+use human_repr::HumanDuration;
 use humansize::ToF64;
 use tui::widgets::{Cell, Table};
 use tui::{
@@ -193,8 +194,8 @@ fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
         "type".to_string(),
         "last activity".to_string(),
         "pid".to_string(),
-        format!("rx/s [{:?}]", rate_duration.unwrap_or_default()),
-        format!("tx/s [{:?}]", rate_duration.unwrap_or_default()),
+        "rx/s".to_string(),
+        "tx/s".to_string(),
     ]
     .into_iter()
     .map(|h| Cell::from(h).style(Style::default().fg(Color::Yellow)));
@@ -203,16 +204,15 @@ fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
     let formatter = Formatter::default();
 
     let rows = sock_table.dataset().iter().map(|datapoint| {
+        let last_activity = now
+            .duration_since(datapoint.last_activity)
+            .unwrap_or_default();
+
         let cells = [
             Cell::from(datapoint.socket.local.to_string()),
             Cell::from(datapoint.socket.remote.to_string()),
             Cell::from(datapoint.socket.sock_type.to_string()),
-            Cell::from(format!(
-                "{:?}",
-                now.duration_since(datapoint.last_activity)
-                    .ok()
-                    .unwrap_or_default()
-            )),
+            Cell::from(last_activity.human_duration().to_string()),
             Cell::from(datapoint.pid.to_string()),
             Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.rx)),
             Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.tx)),
@@ -223,12 +223,12 @@ fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
         .header(header)
         .block(Block::default().borders(Borders::ALL).title("Table"))
         .highlight_style(selected_style)
-        .highlight_symbol(">> ")
+        .highlight_symbol("> ")
         .widths(&[
             Constraint::Percentage(20),
             Constraint::Percentage(20),
             Constraint::Min(10),
-            Constraint::Percentage(15),
+            Constraint::Percentage(10),
             Constraint::Percentage(10),
             Constraint::Percentage(10),
             Constraint::Percentage(10),
@@ -241,8 +241,9 @@ struct Formatter(humansize::FormatSizeOptions);
 impl Default for Formatter {
     fn default() -> Self {
         Self(
-            humansize::FormatSizeOptions::from(humansize::DECIMAL)
-                .base_unit(humansize::BaseUnit::Bit),
+            humansize::FormatSizeOptions::from(humansize::BINARY)
+                .base_unit(humansize::BaseUnit::Byte)
+                .space_after_value(true),
         )
     }
 }
@@ -251,10 +252,10 @@ impl Formatter {
     pub fn format_rate(&self, rate_duration: Option<Duration>, val: u64) -> String {
         rate_duration
             .map(|rate_duration| {
-                let rate = val * 8
-                    / (rate_duration.as_secs() * 1000 + rate_duration.subsec_millis() as u64)
-                    * 1000;
-                humansize::format_size(rate as u64, self.0)
+                let rate = ((val * 8).to_f64() / rate_duration.as_secs_f64())
+                    .round()
+                    .clamp(f64::MIN_POSITIVE, f64::MAX) as u64;
+                humansize::format_size(rate, self.0)
             })
             .unwrap_or_default()
     }

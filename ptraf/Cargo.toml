@@ -15,15 +15,16 @@ clap = { version = "4.1", features = ["derive"] }
 crossterm = { version = "0.25", features = ["event-stream", "futures-core"] } # tui version
 dashmap = "5.4"
 env_logger = "0.10"
+futures = "0.3.26"
 fxhash = "0.2"
 humansize = "2.1"
+human-repr = "1.0.1"
 log = { version = "0.4", features = ["std"] }
 tokio = { version = "1.24", features = ["macros", "rt", "rt-multi-thread", "net", "signal", "sync", "time"] }
 tui = "0.19"
 
 # local
 ptraf-common = { path = "../ptraf-common", features = ["user"] }
-futures = "0.3.26"
 
 [[bin]]
 name = "ptraf"

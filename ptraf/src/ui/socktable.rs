@@ -14,14 +14,14 @@ use crate::{
 
 #[derive(Debug)]
 pub struct SocketTableConfig {
-    backlog: Duration, // TODO(rename): collection window
+    collection_window: Duration,
     rate_window: Duration,
 }
 
 impl Default for SocketTableConfig {
     fn default() -> Self {
         Self {
-            backlog: Duration::from_secs(300), // 5 min
+            collection_window: Duration::from_secs(300), // 5 min
             rate_window: Duration::from_secs(1),
         }
     }
@@ -37,7 +37,7 @@ impl SocketTableConfig {
     }
 
     pub fn backlog(&self) -> Duration {
-        self.backlog
+        self.collection_window
     }
 }
 
@@ -108,6 +108,8 @@ impl SocketTable {
     pub fn collect(&mut self, ts: Timestamp, clock: &ClockNano, store: &Store) {
         let window = store.window();
 
+        let ts = ts.trunc(window);
+
         let rate_until: Timestamp =
             ts.0.saturating_sub(self.config.rate_window)
                 .max(window)
@@ -121,7 +123,7 @@ impl SocketTable {
             .iter()
             .rev()
             .take_while(|time_segment| {
-                time_segment.ts.saturating_elapsed_since(&ts) <= self.config.backlog
+                time_segment.ts.saturating_elapsed_since(&ts) <= self.config.collection_window
             })
             .for_each(|time_segment| collector.collect(time_segment, clock));
 
