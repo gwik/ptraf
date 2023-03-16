@@ -1,16 +1,23 @@
 pub mod socktable;
 
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use std::{io, sync::Arc};
 
+use anyhow::Context;
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::stream::StreamExt;
+use tui::layout::Rect;
+use tui::style::{Modifier, Style};
+use tui::widgets::canvas::Label;
+use tui::widgets::{Block, Paragraph};
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Layout},
@@ -24,6 +31,7 @@ pub struct App {
     clock: ClockNano,
     store: Store,
     sock_table: RwLock<socktable::SocketTable>,
+    paused: AtomicBool,
 }
 
 impl App {
@@ -35,6 +43,7 @@ impl App {
             sock_table,
             store,
             clock,
+            paused: false.into(),
         }
     }
 
@@ -46,6 +55,12 @@ impl App {
         &self.store
     }
 
+    pub(crate) fn toggle_pause(&self) {
+        // incorrect usage of atomics but good enough for this purpose, and cheap.
+        let val = self.is_paused();
+        self.paused.store(!val, Relaxed);
+    }
+
     pub(crate) fn sock_table(&self) -> impl Deref<Target = socktable::SocketTable> + '_ {
         self.sock_table.read().unwrap()
     }
@@ -54,14 +69,21 @@ impl App {
         self.sock_table.write().unwrap()
     }
 
+    #[inline]
+    fn is_paused(&self) -> bool {
+        self.paused.load(Relaxed)
+    }
+
     async fn collect(&self, rate: Duration) -> Result<(), anyhow::Error> {
         loop {
             tokio::time::sleep(rate).await;
 
-            let ts = self.clock.now();
+            if !self.is_paused() {
+                let ts = self.clock.now();
 
-            let sock_table = &mut self.sock_table.write().unwrap();
-            sock_table.collect(ts, &self.clock, &self.store);
+                let sock_table = &mut self.sock_table.write().unwrap();
+                sock_table.collect(ts, &self.clock, &self.store);
+            }
         }
     }
 }
@@ -69,6 +91,7 @@ impl App {
 #[derive(Debug, Clone)]
 enum Action {
     Quit,
+    Pause,
     Change,
 }
 
@@ -77,25 +100,27 @@ async fn run_app<B: Backend>(
     app: Arc<App>,
     tick_rate: Duration,
 ) -> Result<(), anyhow::Error> {
-    // FIXME(use)
-    let _collect_handle = {
+    let mut collect_handle = {
         let app = Arc::clone(&app);
         tokio::spawn(async move { app.collect(tick_rate).await })
     };
 
-    let (sigtx, mut sigrx) = tokio::sync::mpsc::channel(100);
+    let (sigtx, mut sigrx) = tokio::sync::mpsc::channel(32);
 
-    {
+    let mut events_handle = {
         let app = Arc::clone(&app);
         tokio::spawn(async move {
             let mut events = event::EventStream::new();
             while let Some(event) = events.next().await {
-                // FIXME(gwik): handle error;
                 if let Event::Key(key) = event? {
                     match key.code {
                         KeyCode::Char('q') => {
                             sigtx.send(Action::Quit).await?;
                             return Ok(());
+                        }
+                        KeyCode::Char(' ') => {
+                            app.toggle_pause();
+                            sigtx.send(Action::Pause).await?;
                         }
                         KeyCode::Up => {
                             app.sock_table_mut().up();
@@ -111,17 +136,19 @@ async fn run_app<B: Backend>(
             }
 
             Ok::<_, anyhow::Error>(())
-        });
-    }
+        })
+    };
 
     let mut last_update = Instant::now();
     let mut needs_display = true;
 
     loop {
         let app = Arc::clone(&app);
+        let collect_handle = &mut collect_handle;
+        let events_handle = &mut events_handle;
 
         if needs_display || last_update.elapsed() > tick_rate {
-            terminal.draw(|f| table_ui(f, app))?;
+            terminal.draw(|f| table_ui(f, &app))?;
             last_update = Instant::now();
             needs_display = false;
         }
@@ -130,18 +157,23 @@ async fn run_app<B: Backend>(
         let timeout = tokio::time::sleep(tick_rate.saturating_sub(last_update.elapsed()));
 
         tokio::select! {
-            res = rx_fut => {
-                match res {
+            res = events_handle => {
+                return res.context("event loop exited").and_then(|task_result| task_result);
+            }
+            res = collect_handle => {
+                return res.context("collect task exited").and_then(|task_result| task_result);
+            }
+            action = rx_fut => {
+                match action {
                     Some(Action::Quit) => break,
-                    Some(Action::Change) => { needs_display = true },
-                    _ => {},
+                    Some(Action::Change |  Action::Pause) => { needs_display = true },
+                    _ => {}
                 }
             }
             _ = timeout => {}
         };
     }
 
-    // collect_handle.await??;
     Ok(())
 }
 
@@ -165,11 +197,25 @@ pub async fn run_ui(app: Arc<App>, tick_rate: Duration) -> Result<(), anyhow::Er
     res
 }
 
-fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
+fn table_ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     let rects = Layout::default()
-        .constraints([Constraint::Percentage(100)].as_ref())
+        .constraints([Constraint::Percentage(99), Constraint::Min(1)].as_ref())
         .split(f.size());
 
     let socket_table = app.sock_table();
     socktable::socket_table_ui(f, rects[0], &socket_table);
+
+    footer_bar_ui(f, rects[1], app);
+}
+
+fn footer_bar_ui<B: Backend>(f: &mut Frame<B>, rect: Rect, app: &App) {
+    let paragraph = if app.is_paused() {
+        let style = Style::default().bg(tui::style::Color::Red);
+        Paragraph::new(" PAUSED (press SpaceBar to run)").style(style)
+    } else {
+        let style = Style::default().bg(tui::style::Color::DarkGray);
+        Paragraph::new(" RUNNING (press SpaceBar to pause)").style(style)
+    };
+
+    f.render_widget(paragraph, rect);
 }
