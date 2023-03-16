@@ -257,7 +257,7 @@ pub(crate) fn socket_table_ui<B: Backend>(f: &mut Frame<B>, rect: Rect, sock_tab
     });
     let t = Table::new(rows)
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title("Table"))
+        .block(Block::default().borders(Borders::ALL).title("Sockets"))
         .highlight_style(selected_style)
         .highlight_symbol("> ")
         .widths(&[
