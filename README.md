@@ -7,3 +7,5 @@ An eBPF based per-process network traffic monitor for linux only. Written in rus
 ## Build and run
 
 	cargo xtask run
+
+![Screenshot](screen.png)
