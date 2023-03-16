@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct SocketTableConfig {
+pub(crate) struct SocketTableConfig {
     collection_window: Duration,
     rate_window: Duration,
 }
@@ -50,7 +50,7 @@ impl SocketTableConfig {
 }
 
 #[derive(Debug)]
-pub struct SocketTable {
+pub(crate) struct SocketTable {
     table_state: TableState,
     dataset: Vec<DataPoint>,
     rate_collection_range: Option<Range<Timestamp>>,

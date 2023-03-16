@@ -1,5 +1,3 @@
-pub mod socktable;
-
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
@@ -27,10 +25,16 @@ use tui::{
 use crate::clock::ClockNano;
 use crate::store::Store;
 
+use self::traffic_sparkline::TrafficSparkline;
+
+mod socktable;
+mod traffic_sparkline;
+
 pub struct App {
     clock: ClockNano,
     store: Store,
     sock_table: RwLock<socktable::SocketTable>,
+    traffic: RwLock<traffic_sparkline::TrafficSparkline>,
     paused: AtomicBool,
 }
 
@@ -39,8 +43,13 @@ impl App {
         // TODO(gwik): config
         let sock_table = socktable::SocketTableConfig::default().build();
         let sock_table = RwLock::new(sock_table);
+
+        let traffic = traffic_sparkline::TrafficSparkline::default();
+        let traffic = RwLock::new(traffic);
+
         Self {
             sock_table,
+            traffic,
             store,
             clock,
             paused: false.into(),
@@ -69,6 +78,10 @@ impl App {
         self.sock_table.write().unwrap()
     }
 
+    pub(crate) fn traffic(&self) -> impl Deref<Target = traffic_sparkline::TrafficSparkline> + '_ {
+        self.traffic.read().unwrap()
+    }
+
     #[inline]
     fn is_paused(&self) -> bool {
         self.paused.load(Relaxed)
@@ -79,10 +92,16 @@ impl App {
             tokio::time::sleep(rate).await;
 
             if !self.is_paused() {
-                let ts = self.clock.now();
+                let ts = self.store.oldest_timestamp(self.clock.now());
 
-                let sock_table = &mut self.sock_table.write().unwrap();
-                sock_table.collect(ts, &self.clock, &self.store);
+                {
+                    let sock_table = &mut self.sock_table.write().unwrap();
+                    sock_table.collect(ts, &self.clock, &self.store);
+                }
+                {
+                    let traffic = &mut self.traffic.write().unwrap();
+                    traffic.collect(ts, &self.clock, &self.store);
+                }
             }
         }
     }
@@ -199,13 +218,23 @@ pub async fn run_ui(app: Arc<App>, tick_rate: Duration) -> Result<(), anyhow::Er
 
 fn table_ui<B: Backend>(f: &mut Frame<B>, app: &App) {
     let rects = Layout::default()
-        .constraints([Constraint::Percentage(99), Constraint::Min(1)].as_ref())
+        .constraints(
+            [
+                Constraint::Percentage(12),
+                Constraint::Percentage(87),
+                Constraint::Min(1),
+            ]
+            .as_ref(),
+        )
         .split(f.size());
 
-    let socket_table = app.sock_table();
-    socktable::socket_table_ui(f, rects[0], &socket_table);
+    let traffic = app.traffic();
+    traffic_sparkline::traffic_sparkline_ui(f, rects[0], &traffic);
 
-    footer_bar_ui(f, rects[1], app);
+    let socket_table = app.sock_table();
+    socktable::socket_table_ui(f, rects[1], &socket_table);
+
+    footer_bar_ui(f, rects[2], app);
 }
 
 fn footer_bar_ui<B: Backend>(f: &mut Frame<B>, rect: Rect, app: &App) {

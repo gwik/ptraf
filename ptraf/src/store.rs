@@ -363,6 +363,10 @@ impl Store {
         TimeSegmentsView(self.segments.read().unwrap())
     }
 
+    pub fn oldest_timestamp(&self, ts: Timestamp) -> Timestamp {
+        self.write_segment(ts).ts
+    }
+
     fn write_segment(&self, ts: Timestamp) -> WriteTimeSegment<'_> {
         let ts = ts.trunc(self.window);
 
