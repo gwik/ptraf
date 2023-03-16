@@ -40,11 +40,13 @@ impl SocketTableConfig {
         SocketTable::new(self)
     }
 
+    #[allow(unused)]
     pub fn rate_window(&self) -> Duration {
         self.rate_window
     }
 
-    pub fn backlog(&self) -> Duration {
+    #[allow(unused)]
+    pub fn collection_window(&self) -> Duration {
         self.collection_window
     }
 }
@@ -67,6 +69,7 @@ impl SocketTable {
         }
     }
 
+    #[allow(unused)]
     pub fn config(&self) -> &SocketTableConfig {
         &self.config
     }

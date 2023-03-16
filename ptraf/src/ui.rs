@@ -13,9 +13,8 @@ use crossterm::{
 };
 use futures::stream::StreamExt;
 use tui::layout::Rect;
-use tui::style::{Modifier, Style};
-use tui::widgets::canvas::Label;
-use tui::widgets::{Block, Paragraph};
+use tui::style::Style;
+use tui::widgets::Paragraph;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Layout},
@@ -24,8 +23,6 @@ use tui::{
 
 use crate::clock::ClockNano;
 use crate::store::Store;
-
-use self::traffic_sparkline::TrafficSparkline;
 
 mod socktable;
 mod traffic_sparkline;

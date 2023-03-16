@@ -5,7 +5,7 @@ use tui::{
     backend::Backend,
     layout::Rect,
     style::{Color, Style},
-    widgets::{Block, Sparkline},
+    widgets::Sparkline,
     Frame,
 };
 
