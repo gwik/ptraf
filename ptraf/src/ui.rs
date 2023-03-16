@@ -2,7 +2,7 @@ pub mod socktable;
 
 use std::ops::{Deref, DerefMut};
 use std::sync::RwLock;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use std::{io, sync::Arc};
 
 use crossterm::{
@@ -11,14 +11,9 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::stream::StreamExt;
-use human_repr::HumanDuration;
-use humansize::ToF64;
-use tui::widgets::{Cell, Table};
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Layout},
-    style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Row},
     Frame, Terminal,
 };
 
@@ -175,88 +170,6 @@ fn table_ui<B: Backend>(f: &mut Frame<B>, app: Arc<App>) {
         .constraints([Constraint::Percentage(100)].as_ref())
         .split(f.size());
 
-    let now = SystemTime::now();
-
-    let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-    let normal_style = Style::default().bg(Color::DarkGray);
-
-    let sock_table = app.sock_table();
-    // FIXME(gwik): find a better place for this so that we don't need to lock/clone it.
-    let mut table_state = sock_table.table_state().clone();
-    let rate_duration = sock_table
-        .rate_collection_range()
-        .map(|range| range.start.saturating_elapsed_since(&range.end))
-        .filter(|duration| !duration.is_zero());
-
-    let header_cells = [
-        "local".to_string(),
-        "remote".to_string(),
-        "type".to_string(),
-        "last activity".to_string(),
-        "pid".to_string(),
-        "rx/s".to_string(),
-        "tx/s".to_string(),
-    ]
-    .into_iter()
-    .map(|h| Cell::from(h).style(Style::default().fg(Color::Yellow)));
-    let header = Row::new(header_cells).style(normal_style).height(1);
-
-    let formatter = Formatter::default();
-
-    let rows = sock_table.dataset().iter().map(|datapoint| {
-        let last_activity = now
-            .duration_since(datapoint.last_activity)
-            .unwrap_or_default();
-
-        let cells = [
-            Cell::from(datapoint.socket.local.to_string()),
-            Cell::from(datapoint.socket.remote.to_string()),
-            Cell::from(datapoint.socket.sock_type.to_string()),
-            Cell::from(last_activity.human_duration().to_string()),
-            Cell::from(datapoint.pid.to_string()),
-            Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.rx)),
-            Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.tx)),
-        ];
-        Row::new(cells) // style
-    });
-    let t = Table::new(rows)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title("Table"))
-        .highlight_style(selected_style)
-        .highlight_symbol("> ")
-        .widths(&[
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Min(10),
-            Constraint::Percentage(10),
-            Constraint::Percentage(10),
-            Constraint::Percentage(10),
-            Constraint::Percentage(10),
-        ]);
-    f.render_stateful_widget(t, rects[0], &mut table_state);
-}
-
-struct Formatter(humansize::FormatSizeOptions);
-
-impl Default for Formatter {
-    fn default() -> Self {
-        Self(
-            humansize::FormatSizeOptions::from(humansize::BINARY)
-                .base_unit(humansize::BaseUnit::Byte)
-                .space_after_value(true),
-        )
-    }
-}
-
-impl Formatter {
-    pub fn format_rate(&self, rate_duration: Option<Duration>, val: u64) -> String {
-        rate_duration
-            .map(|rate_duration| {
-                let rate = ((val * 8).to_f64() / rate_duration.as_secs_f64())
-                    .round()
-                    .clamp(f64::MIN_POSITIVE, f64::MAX) as u64;
-                humansize::format_size(rate, self.0)
-            })
-            .unwrap_or_default()
-    }
+    let socket_table = app.sock_table();
+    socktable::socket_table_ui(f, rects[0], &socket_table);
 }
