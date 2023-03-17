@@ -1,6 +1,4 @@
-use std::ops::{Deref, DerefMut};
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::Relaxed;
+use std::ops::Deref;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 use std::{io, sync::Arc};
@@ -14,17 +12,17 @@ use crossterm::{
 use futures::stream::StreamExt;
 use tui::layout::Rect;
 use tui::style::Style;
-use tui::widgets::{Paragraph, StatefulWidget, TableState, Widget};
+use tui::widgets::Paragraph;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Layout},
     Frame, Terminal,
 };
 
-use crate::clock::ClockNano;
-use crate::store::Store;
+use crate::clock::{ClockNano, Timestamp};
+use crate::store::{Interest, Store};
 
-use self::socktable::SocketTable;
+use self::socktable::{SocketTableConfig, SocketTableView};
 use self::traffic_sparkline::TrafficSparkline;
 
 mod socktable;
@@ -33,26 +31,18 @@ mod traffic_sparkline;
 pub struct App {
     clock: ClockNano,
     store: Store,
-    sock_table: RwLock<socktable::SocketTable>,
     traffic: RwLock<traffic_sparkline::TrafficSparkline>,
-    paused: AtomicBool,
 }
 
 impl App {
     pub fn new(clock: ClockNano, store: Store) -> Self {
-        // TODO(gwik): config
-        let sock_table = socktable::SocketTableConfig::default().build();
-        let sock_table = RwLock::new(sock_table);
-
         let traffic = traffic_sparkline::TrafficSparkline::default();
         let traffic = RwLock::new(traffic);
 
         Self {
-            sock_table,
             traffic,
             store,
             clock,
-            paused: false.into(),
         }
     }
 
@@ -64,44 +54,18 @@ impl App {
         &self.store
     }
 
-    pub(crate) fn toggle_pause(&self) {
-        // incorrect usage of atomics but good enough for this purpose, and cheap.
-        let val = self.is_paused();
-        self.paused.store(!val, Relaxed);
-    }
-
-    pub(crate) fn sock_table(&self) -> impl Deref<Target = socktable::SocketTable> + '_ {
-        self.sock_table.read().unwrap()
-    }
-
-    pub(crate) fn sock_table_mut(&self) -> impl DerefMut<Target = socktable::SocketTable> + '_ {
-        self.sock_table.write().unwrap()
-    }
-
     pub(crate) fn traffic(&self) -> impl Deref<Target = traffic_sparkline::TrafficSparkline> + '_ {
         self.traffic.read().unwrap()
-    }
-
-    #[inline]
-    fn is_paused(&self) -> bool {
-        self.paused.load(Relaxed)
     }
 
     async fn collect(&self, rate: Duration) -> Result<(), anyhow::Error> {
         loop {
             tokio::time::sleep(rate).await;
 
-            if !self.is_paused() {
-                let ts = self.store.oldest_timestamp(self.clock.now());
-
-                {
-                    let sock_table = &mut self.sock_table.write().unwrap();
-                    sock_table.collect(ts, &self.clock, &self.store);
-                }
-                {
-                    let traffic = &mut self.traffic.write().unwrap();
-                    traffic.collect(ts, &self.clock, &self.store);
-                }
+            let ts = self.store.oldest_timestamp(self.clock.now());
+            {
+                let traffic = &mut self.traffic.write().unwrap();
+                traffic.collect(ts, &self.clock, &self.store);
             }
         }
     }
@@ -111,6 +75,8 @@ impl App {
 enum UiEvent {
     Quit,
     Change,
+    Back,
+    SelectProcess(u32),
 }
 
 async fn run_app<B: Backend>(
@@ -177,54 +143,6 @@ pub async fn run_ui(app: Arc<App>, tick_rate: Duration) -> Result<(), anyhow::Er
 }
 
 #[derive(Debug, Default)]
-struct SocketTableView {
-    filter: Filter,
-    table_state: TableState,
-    len: usize,
-}
-
-impl SocketTableView {
-    #[inline]
-    fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    fn down(&mut self) {
-        let selected = if self.is_empty() {
-            None
-        } else {
-            self.table_state
-                .selected()
-                .map_or(0, |selected| {
-                    selected.saturating_add(1).min(self.len.saturating_sub(1))
-                })
-                .into()
-        };
-        self.table_state.select(selected);
-    }
-
-    fn up(&mut self) {
-        let selected = if self.is_empty() || self.table_state.selected().is_none() {
-            None
-        } else {
-            self.table_state
-                .selected()
-                .unwrap()
-                .saturating_sub(1)
-                .min(self.len.saturating_sub(1))
-                .into()
-        };
-        self.table_state.select(selected);
-    }
-
-    fn render<B: Backend>(&mut self, frame: &mut Frame<B>, rect: Rect, socket_table: &SocketTable) {
-        self.len = socket_table.len();
-        // TODO(gwik): move rendering here
-        socktable::socket_table_ui(frame, rect, socket_table, &mut self.table_state);
-    }
-}
-
-#[derive(Debug, Default)]
 struct TrafficSparklineView {}
 
 impl TrafficSparklineView {
@@ -256,8 +174,9 @@ impl FooterBar {
 }
 
 struct UiContext<'a> {
+    ts: Timestamp,
     store: &'a Store,
-    socket_table: &'a SocketTable,
+    clock: &'a ClockNano,
     traffic: &'a TrafficSparkline,
     paused: bool,
 }
@@ -271,11 +190,20 @@ trait View<B: Backend> {
     fn render(&mut self, f: &mut Frame<B>, ctx: &UiContext<'_>);
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
-enum Filter {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Filter {
     #[default]
     NoFilter,
     Process(u32),
+}
+
+impl Filter {
+    fn interest(self) -> Option<Interest> {
+        match self {
+            Self::Process(pid) => Interest::Pid(pid).into(),
+            Self::NoFilter => None,
+        }
+    }
 }
 
 struct Ui<B> {
@@ -290,8 +218,9 @@ impl<B: Backend> Ui<B> {
         self.dirty = false;
 
         let ctx = UiContext {
+            ts: app.clock().now(),
+            clock: app.clock(),
             store: &app.store,
-            socket_table: &app.sock_table(),
             traffic: &app.traffic(),
             paused: self.paused,
         };
@@ -327,6 +256,16 @@ impl<B: Backend> Ui<B> {
 
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         if let Some(ui_event) = self.view.handle_event(event) {
+            match ui_event {
+                UiEvent::SelectProcess(pid) => {
+                    self.update_filter(Filter::Process(pid));
+                }
+                UiEvent::Back => {
+                    self.update_filter(Filter::NoFilter);
+                }
+                _ => {}
+            }
+
             self.dirty = true;
             return ui_event.into();
         }
@@ -388,11 +327,92 @@ impl<B: Backend> View<B> for MainView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         if let Event::Key(key) = event {
             match key.code {
-                KeyCode::Up => {
+                KeyCode::Up | KeyCode::Char('k') => {
                     self.sock_table_view.up();
                     return UiEvent::Change.into();
                 }
-                KeyCode::Down => {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.sock_table_view.down();
+                    return UiEvent::Change.into();
+                }
+                KeyCode::Char('p') => {
+                    return self
+                        .sock_table_view
+                        .selected_pid()
+                        .map(UiEvent::SelectProcess)
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn render(&mut self, frame: &mut Frame<B>, ctx: &UiContext<'_>) {
+        let rects = Layout::default()
+            .constraints(
+                [
+                    Constraint::Percentage(12),
+                    Constraint::Percentage(87),
+                    Constraint::Min(1),
+                ]
+                .as_ref(),
+            )
+            .split(frame.size());
+
+        self.traffic_sparkline_view
+            .render(frame, rects[0], ctx.traffic);
+
+        self.sock_table_view.render(frame, rects[1], ctx);
+
+        self.footer_bar.render(frame, rects[2], ctx.paused);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Process {
+    pid: u32,
+    name: String,
+}
+
+struct ProcessView {
+    process: Process,
+
+    traffic_sparkline_view: TrafficSparklineView,
+    sock_table_view: SocketTableView,
+    footer_bar: FooterBar,
+}
+
+impl ProcessView {
+    fn new(process: Process) -> Self {
+        let pid = process.pid;
+        // TODO(gwik): config
+        let socket_table = SocketTableConfig::default()
+            .filter(Filter::Process(pid))
+            .build();
+
+        Self {
+            process,
+            traffic_sparkline_view: TrafficSparklineView::default(),
+            sock_table_view: SocketTableView::new(socket_table),
+            footer_bar: FooterBar::default(),
+        }
+    }
+}
+
+impl<B: Backend> View<B> for ProcessView {
+    fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
+        if let Event::Key(key) = event {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Backspace => {
+                    return UiEvent::Back.into();
+                }
+
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.sock_table_view.up();
+                    return UiEvent::Change.into();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
                     self.sock_table_view.down();
                     return UiEvent::Change.into();
                 }
@@ -418,43 +438,8 @@ impl<B: Backend> View<B> for MainView {
         self.traffic_sparkline_view
             .render(frame, rects[0], ctx.traffic);
 
-        self.sock_table_view
-            .render(frame, rects[1], ctx.socket_table);
+        self.sock_table_view.render(frame, rects[1], ctx);
 
         self.footer_bar.render(frame, rects[2], ctx.paused);
     }
-}
-
-#[derive(Debug, Clone)]
-struct Process {
-    pid: u32,
-    name: String,
-}
-
-struct ProcessView {
-    process: Process,
-
-    traffic_sparkline_view: TrafficSparklineView,
-    sock_table_view: SocketTableView,
-    footer_bar: FooterBar,
-}
-
-impl ProcessView {
-    fn new(process: Process) -> Self {
-        let pid = process.pid;
-        Self {
-            process,
-            traffic_sparkline_view: TrafficSparklineView::default(),
-            sock_table_view: SocketTableView {
-                len: 0,
-                filter: Filter::Process(pid),
-                table_state: TableState::default(),
-            },
-            footer_bar: FooterBar::default(),
-        }
-    }
-}
-
-impl<B: Backend> View<B> for ProcessView {
-    fn render(&mut self, f: &mut Frame<B>, ctx: &UiContext<'_>) {}
 }
