@@ -12,7 +12,7 @@ use crossterm::{
 use futures::stream::StreamExt;
 use tui::layout::Rect;
 use tui::style::Style;
-use tui::widgets::Paragraph;
+use tui::widgets::{Block, Paragraph};
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Layout},
@@ -22,9 +22,11 @@ use tui::{
 use crate::clock::{ClockNano, Timestamp};
 use crate::store::{Interest, Store};
 
+use self::process_details::ProcessDetailsView;
 use self::socktable::{SocketTableConfig, SocketTableView};
 use self::traffic_sparkline::TrafficSparkline;
 
+mod process_details;
 mod socktable;
 mod traffic_sparkline;
 
@@ -187,7 +189,7 @@ trait View<B: Backend> {
         None
     }
 
-    fn render(&mut self, f: &mut Frame<B>, ctx: &UiContext<'_>);
+    fn render(&mut self, f: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -211,6 +213,7 @@ struct Ui<B> {
     dirty: bool,
     filter: Filter,
     view: Box<dyn View<B> + Send>,
+    footer: FooterBar,
 }
 
 impl<B: Backend> Ui<B> {
@@ -225,7 +228,12 @@ impl<B: Backend> Ui<B> {
             paused: self.paused,
         };
 
-        self.view.render(frame, &ctx);
+        let rects = Layout::default()
+            .constraints(vec![Constraint::Ratio(9999, 10000), Constraint::Length(1)])
+            .split(frame.size());
+
+        self.view.render(frame, rects[0], &ctx);
+        self.footer.render(frame, rects[1], ctx.paused);
     }
 }
 
@@ -235,7 +243,9 @@ impl<B: Backend> Default for Ui<B> {
             paused: false,
             dirty: true,
             filter: Filter::default(),
+            #[allow(clippy::box_default)]
             view: Box::new(MainView::default()),
+            footer: FooterBar::default(),
         }
     }
 }
@@ -297,21 +307,11 @@ impl<B: Backend> Ui<B> {
         }
     }
 
-    fn set_process(&mut self, process: Process) {
-        self.view = Box::new(ProcessView::new(process))
-    }
-
-    fn reset(&mut self) {
-        self.view = Box::new(MainView::default())
-    }
-
     fn update_view(&mut self) {
-        match self.filter {
-            Filter::NoFilter => self.reset(),
-            Filter::Process(pid) => self.set_process(Process {
-                pid,
-                name: "".to_string(),
-            }),
+        self.view = match self.filter {
+            #[allow(clippy::box_default)]
+            Filter::NoFilter => Box::new(MainView::default()),
+            Filter::Process(pid) => Box::new(ProcessView::new(pid)),
         }
     }
 }
@@ -320,7 +320,6 @@ impl<B: Backend> Ui<B> {
 struct MainView {
     traffic_sparkline_view: TrafficSparklineView,
     sock_table_view: SocketTableView,
-    footer_bar: FooterBar,
 }
 
 impl<B: Backend> View<B> for MainView {
@@ -348,54 +347,34 @@ impl<B: Backend> View<B> for MainView {
         None
     }
 
-    fn render(&mut self, frame: &mut Frame<B>, ctx: &UiContext<'_>) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
         let rects = Layout::default()
-            .constraints(
-                [
-                    Constraint::Percentage(12),
-                    Constraint::Percentage(87),
-                    Constraint::Min(1),
-                ]
-                .as_ref(),
-            )
-            .split(frame.size());
+            .constraints([Constraint::Percentage(13), Constraint::Percentage(87)].as_ref())
+            .split(rect);
 
         self.traffic_sparkline_view
             .render(frame, rects[0], ctx.traffic);
 
         self.sock_table_view.render(frame, rects[1], ctx);
-
-        self.footer_bar.render(frame, rects[2], ctx.paused);
     }
 }
 
-#[derive(Debug, Clone)]
-struct Process {
-    pid: u32,
-    name: String,
-}
-
 struct ProcessView {
-    process: Process,
-
+    process_details_view: ProcessDetailsView,
     traffic_sparkline_view: TrafficSparklineView,
     sock_table_view: SocketTableView,
-    footer_bar: FooterBar,
 }
 
 impl ProcessView {
-    fn new(process: Process) -> Self {
-        let pid = process.pid;
-        // TODO(gwik): config
+    fn new(pid: u32) -> Self {
         let socket_table = SocketTableConfig::default()
             .filter(Filter::Process(pid))
             .build();
 
         Self {
-            process,
+            process_details_view: ProcessDetailsView::new(pid),
             traffic_sparkline_view: TrafficSparklineView::default(),
             sock_table_view: SocketTableView::new(socket_table),
-            footer_bar: FooterBar::default(),
         }
     }
 }
@@ -423,23 +402,23 @@ impl<B: Backend> View<B> for ProcessView {
         None
     }
 
-    fn render(&mut self, frame: &mut Frame<B>, ctx: &UiContext<'_>) {
+    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
         let rects = Layout::default()
             .constraints(
                 [
-                    Constraint::Percentage(12),
-                    Constraint::Percentage(87),
-                    Constraint::Min(1),
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(70),
                 ]
                 .as_ref(),
             )
-            .split(frame.size());
+            .split(rect);
+
+        self.process_details_view.render(frame, rects[0], ctx);
 
         self.traffic_sparkline_view
-            .render(frame, rects[0], ctx.traffic);
+            .render(frame, rects[1], ctx.traffic);
 
-        self.sock_table_view.render(frame, rects[1], ctx);
-
-        self.footer_bar.render(frame, rects[2], ctx.paused);
+        self.sock_table_view.render(frame, rects[2], ctx);
     }
 }

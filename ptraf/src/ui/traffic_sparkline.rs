@@ -1,11 +1,11 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{alloc::Layout, collections::VecDeque, time::Duration};
 
 use ptraf_common::Channel;
 use tui::{
     backend::Backend,
-    layout::Rect,
-    style::{Color, Style},
-    widgets::Sparkline,
+    layout::{Margin, Rect},
+    style::{Color, Modifier, Style},
+    widgets::{Block, Borders, Sparkline, Widget},
     Frame,
 };
 
@@ -78,8 +78,19 @@ pub(crate) fn traffic_sparkline_ui<B: Backend>(
         .collect::<Vec<_>>();
 
     let sparkline = Sparkline::default()
+        .block(
+            Block::default()
+                .borders(Borders::TOP | Borders::BOTTOM)
+                .style(Style::default().add_modifier(Modifier::HIDDEN)),
+        )
         .data(&data[..data.len().saturating_sub(1)])
         .style(Style::default().fg(Color::Yellow));
 
-    f.render_widget(sparkline, rect);
+    f.render_widget(
+        sparkline,
+        rect.inner(&Margin {
+            vertical: 0,
+            horizontal: 0,
+        }),
+    );
 }

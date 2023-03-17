@@ -298,6 +298,7 @@ impl SocketTableView {
             "type".to_string(),
             "last activity".to_string(),
             "pid".to_string(),
+            "process".to_string(),
             "rx/s".to_string(),
             "tx/s".to_string(),
         ]
@@ -318,35 +319,40 @@ impl SocketTableView {
                 Cell::from(datapoint.socket.sock_type.to_string()),
                 Cell::from(last_activity.human_duration().to_string()),
                 Cell::from(datapoint.pid.to_string()),
+                Cell::from(pid_name(datapoint.pid)),
                 Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.rx)),
                 Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.tx)),
             ];
             Row::new(cells) // style
         });
 
-        let block = match self.socket_table.filter {
-            super::Filter::Process(pid) => Block::default()
-                .title(format!("PID ({})", pid))
-                .borders(Borders::all()),
-            super::Filter::NoFilter => Block::default().borders(Borders::ALL).title("Sockets"),
-        };
-
         let t = Table::new(rows)
             .header(header)
-            .block(block)
             .highlight_style(selected_style)
             .highlight_symbol("> ")
             .widths(&[
-                Constraint::Percentage(20),
-                Constraint::Percentage(20),
+                Constraint::Percentage(22),
+                Constraint::Percentage(22),
                 Constraint::Min(10),
                 Constraint::Percentage(10),
-                Constraint::Percentage(10),
+                Constraint::Percentage(5),
+                Constraint::Percentage(11),
                 Constraint::Percentage(10),
                 Constraint::Percentage(10),
             ]);
         frame.render_stateful_widget(t, rect, &mut self.table_state);
     }
+}
+
+fn pid_name(pid: u32) -> String {
+    procfs::process::Process::new(pid as i32)
+        .ok()
+        .and_then(|proc| proc.exe().ok())
+        .as_ref()
+        .and_then(|exe| exe.iter().last())
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .unwrap_or_default()
 }
 
 struct Formatter(humansize::FormatSizeOptions);

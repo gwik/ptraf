@@ -25,6 +25,7 @@ tui = "0.19"
 
 # local
 ptraf-common = { path = "../ptraf-common", features = ["user"] }
+procfs = "0.15.1"
 
 [[bin]]
 name = "ptraf"
