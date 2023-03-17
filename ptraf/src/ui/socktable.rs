@@ -53,7 +53,6 @@ impl SocketTableConfig {
 
 #[derive(Debug)]
 pub(crate) struct SocketTable {
-    table_state: TableState,
     dataset: Vec<DataPoint>,
     rate_collection_range: Option<Range<Timestamp>>,
     config: SocketTableConfig,
@@ -62,11 +61,15 @@ pub(crate) struct SocketTable {
 impl SocketTable {
     pub fn new(config: SocketTableConfig) -> Self {
         Self {
-            table_state: TableState::default(),
             dataset: Vec::default(),
             rate_collection_range: None,
             config,
         }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.dataset.len()
     }
 
     #[allow(unused)]
@@ -78,42 +81,8 @@ impl SocketTable {
         &self.dataset
     }
 
-    pub fn table_state(&self) -> &TableState {
-        &self.table_state
-    }
-
     pub fn rate_collection_range(&self) -> Option<&Range<Timestamp>> {
         self.rate_collection_range.as_ref()
-    }
-
-    pub fn down(&mut self) {
-        let selected = if self.dataset.is_empty() {
-            None
-        } else {
-            self.table_state
-                .selected()
-                .map_or(0, |selected| {
-                    selected
-                        .saturating_add(1)
-                        .min(self.dataset.len().saturating_sub(1))
-                })
-                .into()
-        };
-        self.table_state.select(selected);
-    }
-
-    pub fn up(&mut self) {
-        let selected = if self.dataset.is_empty() || self.table_state.selected().is_none() {
-            None
-        } else {
-            self.table_state
-                .selected()
-                .unwrap()
-                .saturating_sub(1)
-                .min(self.dataset.len().saturating_sub(1))
-                .into()
-        };
-        self.table_state.select(selected);
     }
 
     pub fn collect(&mut self, ts: Timestamp, clock: &ClockNano, store: &Store) {
@@ -211,14 +180,17 @@ impl SocketTableCollector {
     }
 }
 
-pub(crate) fn socket_table_ui<B: Backend>(f: &mut Frame<B>, rect: Rect, sock_table: &SocketTable) {
+pub(crate) fn socket_table_ui<B: Backend>(
+    f: &mut Frame<B>,
+    rect: Rect,
+    sock_table: &SocketTable,
+    table_state: &mut TableState,
+) {
     let now = SystemTime::now();
 
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
     let normal_style = Style::default().bg(Color::DarkGray);
 
-    // FIXME(gwik): find a better place for this so that we don't need to lock/clone it.
-    let mut table_state = sock_table.table_state().clone();
     let rate_duration = sock_table
         .rate_collection_range()
         .map(|range| range.start.saturating_elapsed_since(&range.end))
@@ -269,7 +241,7 @@ pub(crate) fn socket_table_ui<B: Backend>(f: &mut Frame<B>, rect: Rect, sock_tab
             Constraint::Percentage(10),
             Constraint::Percentage(10),
         ]);
-    f.render_stateful_widget(t, rect, &mut table_state);
+    f.render_stateful_widget(t, rect, table_state);
 }
 
 struct Formatter(humansize::FormatSizeOptions);
