@@ -112,7 +112,7 @@ impl TrafficSparklineView {
             ctx.store.window().as_secs_f64() * ctx.store.max_capacity() as f64 / rect.width as f64,
         );
 
-        let mut max: u64 = 0;
+        let mut max = 0.0f64;
 
         let data: Vec<u64> = {
             let window = ctx.store.window().as_secs_f64();
@@ -148,9 +148,9 @@ impl TrafficSparklineView {
             );
 
             self.output_buffer
-                .iter()
-                .map(|v| *v as u64)
-                .inspect(|v| max = max.max(*v))
+                .drain(..)
+                .inspect(|&v| max = max.max(v))
+                .map(|v| v as u64)
                 .collect()
         };
 
@@ -161,11 +161,11 @@ impl TrafficSparklineView {
                     .borders(Borders::TOP | Borders::BOTTOM)
                     .title(format!(
                         " max: {}/s",
-                        formatter.format_rate(Duration::from_secs(1).into(), max),
+                        formatter.format_rate(Duration::from_secs(1).into(), max as u64),
                     ))
                     .title_alignment(Alignment::Right),
             )
-            .max(max + (max as f64 * 0.1) as u64)
+            .max((max + max * 0.1) as u64)
             .data(&data[..data.len().saturating_sub(1)])
             .style(Style::default().fg(Color::Yellow));
 
