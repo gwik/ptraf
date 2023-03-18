@@ -6,12 +6,11 @@ use std::{
 };
 
 use human_repr::HumanDuration;
-use humansize::ToF64;
 use tui::{
     backend::Backend,
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Cell, Row, Table, TableState},
+    widgets::{Cell, Row, Table, TableState},
     Frame,
 };
 
@@ -20,8 +19,11 @@ use crate::{
     store::{Interest, Socket, Stat, Store, TimeSegment},
 };
 
+use super::{format::Formatter, Filter, UiContext};
+
 #[derive(Debug)]
 pub(crate) struct SocketTableConfig {
+    filter: Filter,
     collection_window: Duration,
     rate_window: Duration,
 }
@@ -29,6 +31,7 @@ pub(crate) struct SocketTableConfig {
 impl Default for SocketTableConfig {
     fn default() -> Self {
         Self {
+            filter: Filter::default(),
             collection_window: Duration::from_secs(300), // 5 min
             rate_window: Duration::from_secs(1),
         }
@@ -36,37 +39,49 @@ impl Default for SocketTableConfig {
 }
 
 impl SocketTableConfig {
-    pub fn build(self) -> SocketTable {
+    pub(crate) fn build(self) -> SocketTable {
         SocketTable::new(self)
     }
 
-    #[allow(unused)]
-    pub fn rate_window(&self) -> Duration {
-        self.rate_window
+    pub(crate) fn filter(mut self, filter: Filter) -> Self {
+        self.filter = filter;
+        self
     }
 
     #[allow(unused)]
-    pub fn collection_window(&self) -> Duration {
-        self.collection_window
+    pub(crate) fn rate_window(mut self, window: Duration) -> Self {
+        self.rate_window = window;
+        self
+    }
+
+    #[allow(unused)]
+    pub(crate) fn collection_window(mut self, window: Duration) -> Self {
+        self.collection_window = window;
+        self
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct SocketTable {
-    table_state: TableState,
+    filter: Filter,
     dataset: Vec<DataPoint>,
     rate_collection_range: Option<Range<Timestamp>>,
-    config: SocketTableConfig,
+    config: SocketTableConfig, // Remove this
 }
 
 impl SocketTable {
     pub fn new(config: SocketTableConfig) -> Self {
         Self {
-            table_state: TableState::default(),
+            filter: config.filter,
             dataset: Vec::default(),
             rate_collection_range: None,
             config,
         }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.dataset.len()
     }
 
     #[allow(unused)]
@@ -78,42 +93,8 @@ impl SocketTable {
         &self.dataset
     }
 
-    pub fn table_state(&self) -> &TableState {
-        &self.table_state
-    }
-
     pub fn rate_collection_range(&self) -> Option<&Range<Timestamp>> {
         self.rate_collection_range.as_ref()
-    }
-
-    pub fn down(&mut self) {
-        let selected = if self.dataset.is_empty() {
-            None
-        } else {
-            self.table_state
-                .selected()
-                .map_or(0, |selected| {
-                    selected
-                        .saturating_add(1)
-                        .min(self.dataset.len().saturating_sub(1))
-                })
-                .into()
-        };
-        self.table_state.select(selected);
-    }
-
-    pub fn up(&mut self) {
-        let selected = if self.dataset.is_empty() || self.table_state.selected().is_none() {
-            None
-        } else {
-            self.table_state
-                .selected()
-                .unwrap()
-                .saturating_sub(1)
-                .min(self.dataset.len().saturating_sub(1))
-                .into()
-        };
-        self.table_state.select(selected);
     }
 
     pub fn collect(&mut self, ts: Timestamp, clock: &ClockNano, store: &Store) {
@@ -127,7 +108,7 @@ impl SocketTable {
                 .into();
         let rate_until = rate_until.trunc(window);
 
-        let mut collector = SocketTableCollector::new(rate_until);
+        let mut collector = SocketTableCollector::new(self.filter, rate_until);
 
         store
             .segments_view()
@@ -155,6 +136,7 @@ pub struct DataPoint {
 
 #[derive(Debug)]
 struct SocketTableCollector {
+    filter: Filter,
     socket_cache: HashMap<SocketAddr, DataPoint, fxhash::FxBuildHasher>,
     oldest_segment_ts: Option<Timestamp>,
     oldest_rate_segment_ts: Option<Timestamp>,
@@ -162,8 +144,9 @@ struct SocketTableCollector {
 }
 
 impl SocketTableCollector {
-    fn new(rate_until: Timestamp) -> Self {
+    fn new(filter: Filter, rate_until: Timestamp) -> Self {
         Self {
+            filter,
             socket_cache: HashMap::default(),
             oldest_segment_ts: None,
             oldest_rate_segment_ts: None,
@@ -183,6 +166,11 @@ impl SocketTableCollector {
         }
 
         time_segment.segment.for_each_socket(|socket| {
+            match self.filter {
+                Filter::Process(pid) if socket.pid != pid => return,
+                _ => {}
+            }
+
             let stat = time_segment
                 .segment
                 .stat_by_interest(&Interest::LocalSocket(socket.local))
@@ -211,88 +199,157 @@ impl SocketTableCollector {
     }
 }
 
-pub(crate) fn socket_table_ui<B: Backend>(f: &mut Frame<B>, rect: Rect, sock_table: &SocketTable) {
-    let now = SystemTime::now();
-
-    let selected_style = Style::default().add_modifier(Modifier::REVERSED);
-    let normal_style = Style::default().bg(Color::DarkGray);
-
-    // FIXME(gwik): find a better place for this so that we don't need to lock/clone it.
-    let mut table_state = sock_table.table_state().clone();
-    let rate_duration = sock_table
-        .rate_collection_range()
-        .map(|range| range.start.saturating_elapsed_since(&range.end))
-        .filter(|duration| !duration.is_zero());
-
-    let header_cells = [
-        "local".to_string(),
-        "remote".to_string(),
-        "type".to_string(),
-        "last activity".to_string(),
-        "pid".to_string(),
-        "rx/s".to_string(),
-        "tx/s".to_string(),
-    ]
-    .into_iter()
-    .map(|h| Cell::from(h).style(Style::default().fg(Color::Yellow)));
-    let header = Row::new(header_cells).style(normal_style).height(1);
-
-    let formatter = Formatter::default();
-
-    let rows = sock_table.dataset().iter().map(|datapoint| {
-        let last_activity = now
-            .duration_since(datapoint.last_activity)
-            .unwrap_or_default();
-
-        let cells = [
-            Cell::from(datapoint.socket.local.to_string()),
-            Cell::from(datapoint.socket.remote.to_string()),
-            Cell::from(datapoint.socket.sock_type.to_string()),
-            Cell::from(last_activity.human_duration().to_string()),
-            Cell::from(datapoint.pid.to_string()),
-            Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.rx)),
-            Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.tx)),
-        ];
-        Row::new(cells) // style
-    });
-    let t = Table::new(rows)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title("Sockets"))
-        .highlight_style(selected_style)
-        .highlight_symbol("> ")
-        .widths(&[
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Min(10),
-            Constraint::Percentage(10),
-            Constraint::Percentage(10),
-            Constraint::Percentage(10),
-            Constraint::Percentage(10),
-        ]);
-    f.render_stateful_widget(t, rect, &mut table_state);
+#[derive(Debug)]
+pub(super) struct SocketTableView {
+    socket_table: SocketTable,
+    table_state: TableState,
 }
 
-struct Formatter(humansize::FormatSizeOptions);
-
-impl Default for Formatter {
+impl Default for SocketTableView {
     fn default() -> Self {
-        Self(
-            humansize::FormatSizeOptions::from(humansize::BINARY)
-                .base_unit(humansize::BaseUnit::Byte)
-                .space_after_value(true),
-        )
+        let socket_table = SocketTableConfig::default().build();
+        Self {
+            socket_table,
+            table_state: TableState::default(),
+        }
     }
 }
 
-impl Formatter {
-    pub fn format_rate(&self, rate_duration: Option<Duration>, val: u64) -> String {
-        rate_duration
-            .map(|rate_duration| {
-                let rate = ((val * 8).to_f64() / rate_duration.as_secs_f64())
-                    .round()
-                    .clamp(f64::MIN_POSITIVE, f64::MAX) as u64;
-                humansize::format_size(rate, self.0)
-            })
-            .unwrap_or_default()
+impl SocketTableView {
+    pub(super) fn new(socket_table: SocketTable) -> Self {
+        Self {
+            socket_table,
+            table_state: TableState::default(),
+        }
     }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.socket_table.len()
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub(super) fn down(&mut self) {
+        let selected = if self.is_empty() {
+            None
+        } else {
+            self.table_state
+                .selected()
+                .map_or(0, |selected| {
+                    selected.saturating_add(1).min(self.len().saturating_sub(1))
+                })
+                .into()
+        };
+        self.table_state.select(selected);
+    }
+
+    pub(super) fn up(&mut self) {
+        let selected = if self.is_empty() || self.table_state.selected().is_none() {
+            None
+        } else {
+            self.table_state
+                .selected()
+                .unwrap()
+                .saturating_sub(1)
+                .min(self.len().saturating_sub(1))
+                .into()
+        };
+        self.table_state.select(selected);
+    }
+
+    pub(super) fn selected_pid(&self) -> Option<u32> {
+        self.table_state.selected().and_then(|selected| {
+            self.socket_table
+                .dataset()
+                .get(selected)
+                .map(|item| item.pid)
+        })
+    }
+
+    pub(super) fn render<B: Backend>(
+        &mut self,
+        frame: &mut Frame<B>,
+        rect: Rect,
+        ctx: &UiContext<'_>,
+    ) {
+        if !ctx.paused {
+            self.socket_table.collect(ctx.ts, ctx.clock, ctx.store);
+        }
+
+        let now = SystemTime::now();
+
+        let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+        let normal_style = Style::default().bg(Color::DarkGray);
+
+        let rate_duration = self
+            .socket_table
+            .rate_collection_range()
+            .map(|range| range.start.saturating_elapsed_since(&range.end))
+            .filter(|duration| !duration.is_zero());
+
+        let header_cells = [
+            "local".to_string(),
+            "remote".to_string(),
+            "type".to_string(),
+            "last activity".to_string(),
+            "pid".to_string(),
+            "process".to_string(),
+            "rx/s".to_string(),
+            "tx/s".to_string(),
+        ]
+        .into_iter()
+        .map(|h| Cell::from(h).style(Style::default().fg(Color::Yellow)));
+        let header = Row::new(header_cells).style(normal_style).height(1);
+
+        let formatter = Formatter::default();
+
+        let rows = self.socket_table.dataset().iter().map(|datapoint| {
+            let last_activity = now
+                .duration_since(datapoint.last_activity)
+                .unwrap_or_default();
+
+            let cells = [
+                Cell::from(datapoint.socket.local.to_string()),
+                Cell::from(datapoint.socket.remote.to_string()),
+                Cell::from(datapoint.socket.sock_type.to_string()),
+                Cell::from(last_activity.human_duration().to_string()),
+                Cell::from(datapoint.pid.to_string()),
+                Cell::from(pid_name(datapoint.pid)),
+                Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.rx)),
+                Cell::from(formatter.format_rate(rate_duration, datapoint.rate_stat.tx)),
+            ];
+            Row::new(cells) // style
+        });
+
+        let t = Table::new(rows)
+            .header(header)
+            .highlight_style(selected_style)
+            .highlight_symbol("> ")
+            .widths(&[
+                Constraint::Percentage(22),
+                Constraint::Percentage(22),
+                Constraint::Min(10),
+                Constraint::Percentage(10),
+                Constraint::Percentage(5),
+                Constraint::Percentage(11),
+                Constraint::Percentage(10),
+                Constraint::Percentage(10),
+            ]);
+        frame.render_stateful_widget(t, rect, &mut self.table_state);
+    }
+}
+
+fn pid_name(pid: u32) -> String {
+    procfs::process::Process::new(pid as i32)
+        .ok()
+        .and_then(|proc| proc.exe().ok())
+        .as_ref()
+        .and_then(|exe| exe.iter().last())
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .unwrap_or_default()
 }

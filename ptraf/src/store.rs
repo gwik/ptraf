@@ -22,6 +22,7 @@ pub enum Interest {
     RemoteSocket(SocketAddr),
     LocalSocket(SocketAddr),
     Pid(u32),
+    All,
 }
 
 #[derive(Debug, Default)]
@@ -113,38 +114,16 @@ impl Metrics {
     fn increment(&self, channel: Channel, val: u64, count: u64) {
         self.with_channel(channel).increment(val, count)
     }
-
-    #[inline]
-    pub fn packet_count(&self) -> u64 {
-        self.tx.count() + self.rx.count()
-    }
-
-    #[inline]
-    pub fn rx(&self) -> u64 {
-        self.rx.size()
-    }
-
-    #[inline]
-    pub fn tx(&self) -> u64 {
-        self.tx.size()
-    }
-
-    pub fn get(&self, channel: Option<Channel>) -> u64 {
-        match channel {
-            None => self.tx() + self.rx(),
-            Some(Channel::Rx) => self.rx(),
-            Some(Channel::Tx) => self.tx(),
-        }
-    }
 }
 
 impl Interest {
-    pub fn interests_from_msg(msg: &SockMsgEvent) -> [Interest; 4] {
+    pub fn interests_from_msg(msg: &SockMsgEvent) -> [Interest; 5] {
         [
             Interest::Pid(msg.pid),
             Interest::LocalSocket(msg.local_sock_addr()),
             Interest::RemoteSocket(msg.remote_sock_addr()),
             Interest::RemoteIp(msg.remote_addr.into()),
+            Interest::All,
         ]
     }
 }
@@ -182,32 +161,15 @@ impl Hash for Socket {
 
 #[derive(Debug, Default)]
 pub struct Segment {
-    total: Metrics,
     index: DashMap<Interest, Metrics, FxBuildHasher>,
     socks: DashSet<Socket, FxBuildHasher>,
 }
 
 impl Segment {
     pub fn batch_update<'a>(&self, messages: impl IntoIterator<Item = &'a SockMsgEvent>) {
-        let mut rx: u64 = 0;
-        let mut tx: u64 = 0;
-
-        let mut rx_n: u64 = 0;
-        let mut tx_n: u64 = 0;
-
         for msg in messages {
             if let Ok(len) = msg.packet_size() {
                 let len = len.into();
-                match msg.channel {
-                    Channel::Tx => {
-                        tx += len;
-                        tx_n += 1;
-                    }
-                    Channel::Rx => {
-                        rx += len;
-                        rx_n += 1;
-                    }
-                }
 
                 self.socks.insert(msg.into());
 
@@ -225,19 +187,22 @@ impl Segment {
                 }
             }
         }
-
-        self.total.increment(Channel::Rx, rx, rx_n);
-        self.total.increment(Channel::Tx, tx, tx_n);
     }
 
-    #[inline]
     pub fn total(&self, channel: Option<Channel>) -> u64 {
-        self.total.get(channel)
+        self.stat_by_interest(&Interest::All)
+            .map(|stat| match channel {
+                Some(Channel::Tx) => stat.tx,
+                Some(Channel::Rx) => stat.rx,
+                None => stat.tx + stat.rx,
+            })
+            .unwrap_or_default()
     }
 
-    #[inline]
     pub fn total_packet_count(&self) -> u64 {
-        self.total.packet_count()
+        self.stat_by_interest(&Interest::All)
+            .map(|stat| stat.rx_packet_count + stat.tx_packet_count)
+            .unwrap_or_default()
     }
 
     pub fn stat_by_interest(&self, interest: &Interest) -> Option<Stat> {
@@ -288,13 +253,13 @@ impl TimeSegmentsView<'_> {
 
     /// Returns a reference to the first time segment in the reader, or `None` if the reader is empty.
     #[inline]
-    pub fn first(&self) -> Option<&TimeSegment> {
+    pub fn oldest(&self) -> Option<&TimeSegment> {
         self.0.front()
     }
 
     /// Returns a reference to the last time segment in the reader, or `None` if the reader is empty.
     #[inline]
-    pub fn last(&self) -> Option<&TimeSegment> {
+    pub fn newest(&self) -> Option<&TimeSegment> {
         self.0.back()
     }
 
@@ -341,6 +306,10 @@ impl Store {
 
     pub fn window(&self) -> Duration {
         self.window
+    }
+
+    pub fn max_capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Update the store from the messages.
@@ -441,9 +410,9 @@ mod tests {
                 channel: Channel::Tx,
                 sock_type: SockType::Stream,
                 local_addr: ptraf_common::IpAddr::v4(33),
-                local_port: 31,
+                local_port: 31u16.to_be(),
                 remote_addr: ptraf_common::IpAddr::v4(32),
-                remote_port: 80,
+                remote_port: 80u16.to_be(),
                 ret: 10,
             },
             SockMsgEvent {
@@ -451,9 +420,9 @@ mod tests {
                 channel: Channel::Rx,
                 sock_type: SockType::Stream,
                 local_addr: ptraf_common::IpAddr::v4(33),
-                local_port: 31,
+                local_port: 31u16.to_be(),
                 remote_addr: ptraf_common::IpAddr::v4(32),
-                remote_port: 80,
+                remote_port: 80u16.to_be(),
                 ret: 11,
             },
             SockMsgEvent {
@@ -461,9 +430,9 @@ mod tests {
                 channel: Channel::Tx,
                 sock_type: SockType::Stream,
                 local_addr: ptraf_common::IpAddr::v4(33),
-                local_port: 32,
+                local_port: 32u16.to_be(),
                 remote_addr: ptraf_common::IpAddr::v4(35),
-                remote_port: 443,
+                remote_port: 443u16.to_be(),
                 ret: 12,
             },
             SockMsgEvent {
@@ -471,9 +440,9 @@ mod tests {
                 channel: Channel::Tx,
                 sock_type: SockType::Stream,
                 local_addr: ptraf_common::IpAddr::v4(33),
-                local_port: 33,
+                local_port: 33u16.to_be(),
                 remote_addr: ptraf_common::IpAddr::v4(32),
-                remote_port: 443,
+                remote_port: 443u16.to_be(),
                 ret: 13,
             },
         ];
@@ -486,7 +455,7 @@ mod tests {
         let view = store.segments_view();
         assert_eq!(1, view.len());
 
-        let time_segment = view.first().expect("first segment when not empty");
+        let time_segment = view.oldest().expect("first segment when not empty");
         assert_eq!(time_segment.ts, ts.trunc(window));
 
         let rx = time_segment.segment.total(Channel::Rx.into());
