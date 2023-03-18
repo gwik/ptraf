@@ -19,20 +19,22 @@ use self::{
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Window duration.
-    #[arg(short, long, default_value_t = 250u64)]
-    window_ms: u64,
-    /// Number of segments to keep.
-    #[arg(short, long, default_value_t = 240usize)]
-    segment_count: usize,
+    /// Number of seconds of history to store.
+    /// Defaults to 30s.
+    #[arg(short, long, default_value_t = 30u64)]
+    backlog_secs: u64,
 
     /// Per core message buffer capacity.
-    #[arg(long, default_value_t = unsafe { NonZeroUsize::new_unchecked(4096) })]
+    #[arg(long, default_value_t = { NonZeroUsize::new(4096).unwrap() })]
     msg_buffer_capacity: NonZeroUsize,
 
     /// Frequency of the display.
-    #[arg(short, long, default_value_t = 1000)]
+    #[arg(short, long, default_value_t = 500)]
     ui_refresh_rate_ms: u64,
+
+    /// Duration of a unit of storage in milliseconds. min: 10ms.
+    #[arg(short, long, default_value_t = 250u64)]
+    interval_ms: u64,
 }
 
 #[tokio::main]
@@ -42,7 +44,11 @@ async fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
 
     let clock = ClockNano::default();
-    let store = Store::new(Duration::from_millis(args.window_ms), args.segment_count);
+
+    let segment_interval = Duration::from_millis(args.interval_ms.max(10));
+    let segment_count = (args.backlog_secs * 1000 / (args.interval_ms.max(10))).max(1) as usize;
+
+    let store = Store::new(segment_interval, segment_count);
     let app = Arc::new(App::new(clock, store));
 
     let ui_handle = {
