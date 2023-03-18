@@ -58,6 +58,7 @@ pub struct Stat {
 }
 
 impl Stat {
+    #[cfg(test)]
     pub fn total(&self) -> u64 {
         self.rx + self.tx
     }
@@ -189,6 +190,7 @@ impl Segment {
         }
     }
 
+    #[cfg(test)]
     pub fn total(&self, channel: Option<Channel>) -> u64 {
         self.stat_by_interest(&Interest::All)
             .map(|stat| match channel {
@@ -199,6 +201,7 @@ impl Segment {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn total_packet_count(&self) -> u64 {
         self.stat_by_interest(&Interest::All)
             .map(|stat| stat.rx_packet_count + stat.tx_packet_count)
@@ -207,10 +210,6 @@ impl Segment {
 
     pub fn stat_by_interest(&self, interest: &Interest) -> Option<Stat> {
         self.index.get(interest).map(|m| (&*m).into())
-    }
-
-    pub fn socket_iter(&self) -> impl Iterator<Item = Socket> + '_ {
-        self.socks.iter().map(|sock| *sock)
     }
 
     pub fn for_each_socket(&self, mut f: impl FnMut(&Socket)) {
@@ -240,12 +239,14 @@ pub struct TimeSegmentsView<'a>(RwLockReadGuard<'a, VecDeque<TimeSegment>>);
 
 impl TimeSegmentsView<'_> {
     /// Returns the number of time segments in the reader.
+    #[allow(unused)]
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     /// Returns `true` if the reader contains no time segments.
+    #[allow(unused)]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -258,6 +259,7 @@ impl TimeSegmentsView<'_> {
     }
 
     /// Returns a reference to the last time segment in the reader, or `None` if the reader is empty.
+    #[allow(unused)]
     #[inline]
     pub fn newest(&self) -> Option<&TimeSegment> {
         self.0.back()
