@@ -9,6 +9,7 @@ use crossterm::{
 use futures::stream::StreamExt;
 use tui::layout::Rect;
 use tui::style::Style;
+use tui::text::{Span, Spans};
 use tui::widgets::Paragraph;
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -120,10 +121,16 @@ impl FooterBar {
     fn render<B: Backend>(&self, frame: &mut Frame<B>, rect: Rect, paused: bool) {
         let paragraph = if paused {
             let style = Style::default().bg(tui::style::Color::Red);
-            Paragraph::new(" PAUSED (press SpaceBar to run)").style(style)
+            Paragraph::new(Spans::from(vec![Span::from(
+                " PAUSED (press SpaceBar to run) -- down: 'j', up: 'k', details: 'p' / Enter, quit/back: 'q'",
+            )]))
+            .style(style)
         } else {
             let style = Style::default().bg(tui::style::Color::DarkGray);
-            Paragraph::new(" RUNNING (press SpaceBar to pause)").style(style)
+            Paragraph::new(
+                " RUNNING (press SpaceBar to pause) -- down: 'j', up: 'k', details: 'p' / Enter, quit/back: 'q'",
+            )
+            .style(style)
         };
 
         frame.render_widget(paragraph, rect);
@@ -291,7 +298,7 @@ impl<B: Backend> View<B> for MainView {
                     self.sock_table_view.down();
                     return UiEvent::Change.into();
                 }
-                KeyCode::Char('p') => {
+                KeyCode::Char('p') | KeyCode::Enter => {
                     return self
                         .sock_table_view
                         .selected_pid()
