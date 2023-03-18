@@ -74,6 +74,9 @@ impl TrafficSparkline {
                 self.reverse_buffer.push(datapoint);
             });
 
+        // drop the view so it releases the read lock on the store.
+        drop(view);
+
         // Drain the reverse buffer and insert in the dataset in chronological order.
         self.reverse_buffer
             .drain(..)
