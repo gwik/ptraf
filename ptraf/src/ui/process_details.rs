@@ -15,6 +15,7 @@ use tui::{
 
 use super::UiContext;
 
+#[derive(Debug)]
 pub(super) struct ProcessDetails {
     pid: i32,
     name: Option<String>,
@@ -106,6 +107,7 @@ impl ProcessDetails {
     }
 }
 
+#[derive(Debug)]
 pub(super) struct ProcessDetailsView {
     pid: u32,
     details: ProcessDetails,

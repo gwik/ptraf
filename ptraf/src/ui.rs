@@ -144,13 +144,13 @@ struct UiContext<'a> {
     paused: bool,
 }
 
-trait View<B: Backend> {
+trait View {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         let _ = event;
         None
     }
 
-    fn render(&mut self, f: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>);
+    fn render<B: Backend>(&mut self, f: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -169,16 +169,46 @@ impl Filter {
     }
 }
 
-struct Ui<B> {
+#[derive(Debug)]
+enum RootView {
+    MainView(MainView),
+    ProcessView(ProcessView),
+}
+
+impl Default for RootView {
+    fn default() -> Self {
+        Self::MainView(MainView::default())
+    }
+}
+
+impl View for RootView {
+    #[inline]
+    fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
+        match self {
+            RootView::MainView(inner) => inner.handle_event(event),
+            RootView::ProcessView(inner) => inner.handle_event(event),
+        }
+    }
+
+    #[inline]
+    fn render<B: Backend>(&mut self, f: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
+        match self {
+            RootView::MainView(inner) => inner.render(f, rect, ctx),
+            RootView::ProcessView(inner) => inner.render(f, rect, ctx),
+        }
+    }
+}
+
+struct Ui {
     paused: bool,
     dirty: bool,
     filter: Filter,
-    view: Box<dyn View<B> + Send>,
+    view: RootView,
     footer: FooterBar,
 }
 
-impl<B: Backend> Ui<B> {
-    fn render(&mut self, frame: &mut Frame<B>, app: &App) {
+impl Ui {
+    fn render<B: Backend>(&mut self, frame: &mut Frame<B>, app: &App) {
         self.dirty = false;
 
         // FIXME(gwik): ugly hack to force segments creation when no traffic.
@@ -201,20 +231,20 @@ impl<B: Backend> Ui<B> {
     }
 }
 
-impl<B: Backend> Default for Ui<B> {
+impl Default for Ui {
     fn default() -> Self {
         Self {
             paused: false,
             dirty: true,
             filter: Filter::default(),
             #[allow(clippy::box_default)]
-            view: Box::new(MainView::default()),
+            view: RootView::MainView(MainView::default()),
             footer: FooterBar::default(),
         }
     }
 }
 
-impl<B: Backend> Ui<B> {
+impl Ui {
     #[inline]
     fn set_dirty(&mut self) {
         self.dirty = true;
@@ -274,8 +304,8 @@ impl<B: Backend> Ui<B> {
     fn update_view(&mut self) {
         self.view = match self.filter {
             #[allow(clippy::box_default)]
-            Filter::NoFilter => Box::new(MainView::default()),
-            Filter::Process(pid) => Box::new(ProcessView::new(pid)),
+            Filter::NoFilter => RootView::MainView(MainView::default()),
+            Filter::Process(pid) => RootView::ProcessView(ProcessView::new(pid)),
         }
     }
 }
@@ -286,7 +316,7 @@ struct MainView {
     sock_table_view: SocketTableView,
 }
 
-impl<B: Backend> View<B> for MainView {
+impl View for MainView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         if let Event::Key(key) = event {
             match key.code {
@@ -311,7 +341,7 @@ impl<B: Backend> View<B> for MainView {
         None
     }
 
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
+    fn render<B: Backend>(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
         let rects = Layout::default()
             .constraints([Constraint::Percentage(13), Constraint::Percentage(87)].as_ref())
             .split(rect);
@@ -322,6 +352,7 @@ impl<B: Backend> View<B> for MainView {
     }
 }
 
+#[derive(Debug)]
 struct ProcessView {
     process_details_view: ProcessDetailsView,
     traffic_sparkline_view: TrafficSparklineView,
@@ -342,7 +373,7 @@ impl ProcessView {
     }
 }
 
-impl<B: Backend> View<B> for ProcessView {
+impl View for ProcessView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         if let Event::Key(key) = event {
             match key.code {
@@ -365,7 +396,7 @@ impl<B: Backend> View<B> for ProcessView {
         None
     }
 
-    fn render(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
+    fn render<B: Backend>(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
         let rects = Layout::default()
             .constraints(
                 [
