@@ -4,7 +4,9 @@
 use core::ffi::c_int;
 
 use aya_bpf::helpers::{bpf_get_current_pid_tgid, bpf_probe_read_kernel};
+use aya_bpf::macros::tracepoint;
 use aya_bpf::maps::{HashMap, PerfEventArray};
+use aya_bpf::programs::TracePointContext;
 use aya_bpf::BpfContext;
 use aya_bpf::{
     macros::{kprobe, kretprobe, map},
@@ -26,7 +28,7 @@ use ptraf_common::types::{Channel, IpAddr, SockMsgEvent};
 #[allow(clippy::wrong_self_convention)]
 mod bindings;
 
-use bindings::{sock_common as SockCommon, socket as Socket};
+use bindings::{sock as Sock, sock_common as SockCommon, socket as Socket};
 
 // Force aya_log_epbf to be linked.
 const _UNUSED: usize = aya_log_ebpf::LOG_BUF_CAPACITY;
@@ -59,16 +61,68 @@ pub fn send_msg_ret(ctx: ProbeContext) -> u32 {
     unsafe { try_msg_ret(ctx, Channel::Tx) }.unwrap_or(1)
 }
 
+#[tracepoint(name = "sock_set_state")]
+pub fn inet_sock_set_state(ctx: TracePointContext) -> u32 {
+    /*
+        name: inet_sock_set_state
+        ID: 1417
+        format:
+                field:unsigned short common_type;       offset:0;       size:2; signed:0;
+                field:unsigned char common_flags;       offset:2;       size:1; signed:0;
+                field:unsigned char common_preempt_count;       offset:3;       size:1; signed:0;
+                field:int common_pid;   offset:4;       size:4; signed:1;
+
+                field:const void * skaddr;      offset:8;       size:8; signed:0;
+                field:int oldstate;     offset:16;      size:4; signed:1;
+                field:int newstate;     offset:20;      size:4; signed:1;
+                field:__u16 sport;      offset:24;      size:2; signed:0;
+                field:__u16 dport;      offset:26;      size:2; signed:0;
+                field:__u16 family;     offset:28;      size:2; signed:0;
+                field:__u16 protocol;   offset:30;      size:2; signed:0;
+                field:__u8 saddr[4];    offset:32;      size:4; signed:0;
+                field:__u8 daddr[4];    offset:36;      size:4; signed:0;
+                field:__u8 saddr_v6[16];        offset:40;      size:16;        signed:0;
+                field:__u8 daddr_v6[16];        offset:56;      size:16;        signed:0;
+
+    */
+
+    #[repr(C)]
+    struct InetSockSetState {
+        skaddr: *const Sock,
+        oldstate: c_int,
+        newstate: c_int,
+        sport: u16,
+        dport: u16,
+        family: u16,
+        protocol: u16,
+        saddr: [u8; 4],
+        daddr: [u8; 4],
+        saddr_v6: [u8; 16],
+        daddr_v6: [u8; 16],
+    }
+
+    let args = unsafe { ctx.read_at::<InetSockSetState>(8).unwrap() };
+
+    if matches!(args.family, AF_INET | AF_INET6) {
+        unsafe {
+            notify(ctx, args.skaddr, 0, Channel::Tx)
+                .map(|_| 0)
+                .unwrap_or(1)
+        }
+    } else {
+        0
+    }
+}
+
 const AF_INET: u16 = 2;
 const AF_INET6: u16 = 10;
 
 unsafe fn notify(
-    ctx: ProbeContext,
-    socket: *const Socket,
+    ctx: impl BpfContext,
+    sk: *const Sock,
     ret: c_int,
     channel: Channel,
 ) -> Result<(), i64> {
-    let sk = bpf_probe_read_kernel(&(*socket).sk)?;
     let sk_common = bpf_probe_read_kernel(&(*sk).__sk_common as *const SockCommon)?;
     let sk_type = bpf_probe_read_kernel(&(*sk).sk_type)?;
 
@@ -141,7 +195,7 @@ unsafe fn notify(
     Ok(())
 }
 
-unsafe fn try_msg_ret(ctx: ProbeContext, channel: Channel) -> Result<u32, u32> {
+unsafe fn try_msg_ret(ctx: ProbeContext, channel: Channel) -> Result<u32, i64> {
     let pid_tgid = bpf_get_current_pid_tgid();
     let socket = if let Some(socket) = CACHE.get(&pid_tgid) {
         let _ = CACHE.remove(&pid_tgid);
@@ -150,9 +204,10 @@ unsafe fn try_msg_ret(ctx: ProbeContext, channel: Channel) -> Result<u32, u32> {
         return Ok(0);
     };
 
-    let val: c_int = ctx.ret().ok_or(1u32)?;
+    let val: c_int = ctx.ret().ok_or(1i64)?;
+    let sk = bpf_probe_read_kernel(&(*socket).sk)?;
 
-    match notify(ctx, socket, val, channel) {
+    match notify(ctx, sk, val, channel) {
         Ok(_) => Ok(0),
         Err(_) => Err(1),
     }

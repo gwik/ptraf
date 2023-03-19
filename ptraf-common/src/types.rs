@@ -101,6 +101,23 @@ impl IpAddr {
     }
 }
 
+impl From<[u16; 8]> for IpAddr {
+    fn from(value: [u16; 8]) -> Self {
+        Self::v6(value)
+    }
+}
+
+impl From<[u8; 4]> for IpAddr {
+    fn from(value: [u8; 4]) -> Self {
+        let addr: u32 = ((value[0] as u32) << 24)
+            | ((value[1] as u32) << 16)
+            | ((value[2] as u32) << 8)
+            | (value[3] as u32);
+
+        Self::v4(addr)
+    }
+}
+
 #[cfg(feature = "user")]
 impl From<IpAddr> for std::net::IpAddr {
     fn from(ip: IpAddr) -> std::net::IpAddr {

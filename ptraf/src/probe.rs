@@ -43,7 +43,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use aya::maps::perf::AsyncPerfEventArray;
-use aya::programs::KProbe;
+use aya::programs::{KProbe, TracePoint};
 use aya::util::online_cpus;
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
@@ -86,6 +86,12 @@ impl ProbeProgram {
         let ret_probe: &mut KProbe = bpf.program_mut("recvmsg_ret").unwrap().try_into()?;
         ret_probe.load()?;
         ret_probe.attach("sock_recvmsg", 0)?;
+
+        // TODO(gwik): check the tracepoint is enabled
+
+        let probe: &mut TracePoint = bpf.program_mut("sock_set_state").unwrap().try_into()?;
+        probe.load()?;
+        probe.attach("sock", "inet_sock_set_state")?;
 
         trace!("probe program loaded");
 
