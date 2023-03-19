@@ -112,7 +112,8 @@ impl TrafficSparklineView {
         self.traffic.collect(ctx.store);
 
         let output_interval = Duration::from_secs_f64(
-            ctx.store.window().as_secs_f64() * ctx.store.max_capacity() as f64 / rect.width as f64,
+            ctx.store.window().as_secs_f64() * (ctx.store.max_capacity() - 1) as f64
+                / rect.width as f64,
         );
 
         let mut max = 0.0f64;
