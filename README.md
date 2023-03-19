@@ -8,4 +8,4 @@ An eBPF based per-process network traffic monitor for linux only. Written in rus
 
 	cargo xtask run
 
-![Screenshot](screen.png)
+![Screenshot](https://raw.githubusercontent.com/gwik/files/main/ptraf/ptraf-main-screen.png)
