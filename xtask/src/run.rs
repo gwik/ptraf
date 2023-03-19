@@ -16,6 +16,8 @@ pub struct Options {
     /// The command used to wrap your application
     #[clap(short, long, default_value = "sudo -E")]
     pub runner: String,
+    #[clap(long)]
+    pub example: Option<String>,
     /// Arguments to pass to your application
     #[clap(name = "args", last = true)]
     pub run_args: Vec<String>,
@@ -23,10 +25,15 @@ pub struct Options {
 
 /// Build the project
 fn build(opts: &Options) -> Result<(), anyhow::Error> {
-    let mut args = vec!["build"];
+    let mut args = vec!["build".to_string()];
     if opts.release {
-        args.push("--release")
+        args.push("--release".to_string())
     }
+    if let Some(example) = &opts.example {
+        args.push("--example".to_string());
+        args.push(example.clone());
+    }
+
     let status = Command::new("cargo")
         .args(&args)
         .status()
@@ -47,7 +54,11 @@ pub fn run(opts: Options) -> Result<(), anyhow::Error> {
 
     // profile we are building (release or debug)
     let profile = if opts.release { "release" } else { "debug" };
-    let bin_path = format!("target/{profile}/ptraf");
+    let bin_path = if let Some(example) = &opts.example {
+        format!("target/{profile}/examples/{example}")
+    } else {
+        format!("target/{profile}/ptraf")
+    };
 
     // arguments to pass to the application
     let mut run_args: Vec<_> = opts.run_args.iter().map(String::as_str).collect();
