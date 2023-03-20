@@ -127,13 +127,13 @@ impl FooterBar {
         let paragraph = if paused {
             let style = Style::default().bg(tui::style::Color::Red);
             Paragraph::new(Spans::from(vec![Span::from(
-                " PAUSED (press SpaceBar to run) -- down: 'j', up: 'k', details: 'p' / Enter, quit/back: 'q'",
+                " PAUSED (press SpaceBar to run) -- UP/DOWN: k/j, - FILTERS: p (process), r (remote IP) - QUIT/BACK: q",
             )]))
             .style(style)
         } else {
             let style = Style::default().bg(tui::style::Color::DarkGray);
             Paragraph::new(
-                " RUNNING (press SpaceBar to pause) -- down: 'j', up: 'k', details: 'p' / Enter, quit/back: 'q'",
+                " RUNNING (press SpaceBar to pause) -- UP/DOWN: k/j, - FILTERS: p (process), r (remote IP) - QUIT/BACK: q",
             )
             .style(style)
         };
