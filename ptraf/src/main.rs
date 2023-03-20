@@ -6,6 +6,7 @@ use tokio::signal;
 
 mod clock;
 mod probe;
+mod promise;
 mod store;
 mod ui;
 
