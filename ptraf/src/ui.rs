@@ -27,6 +27,7 @@ use self::traffic_sparkline::TrafficSparklineView;
 mod format;
 mod process_details;
 mod socktable;
+mod styles;
 mod traffic_sparkline;
 
 pub struct App {
