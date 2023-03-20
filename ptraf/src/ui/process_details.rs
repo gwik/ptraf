@@ -13,7 +13,7 @@ use tui::{
     Frame,
 };
 
-use super::UiContext;
+use super::{styles::Styled, UiContext};
 
 #[derive(Debug)]
 pub(super) struct ProcessDetails {
@@ -138,20 +138,18 @@ impl ProcessDetailsView {
             .borders(Borders::ALL)
             .title(Span::styled(title, title_style));
 
-        let label_style = Style::default().add_modifier(Modifier::BOLD);
-
         let inodes: HashSet<_> = self.details.socket_inodes().collect();
 
         let text = vec![
             Spans::from(vec![
-                Span::styled("exe: ", label_style),
+                Styled::label_span("exe "),
                 Span::styled(
                     self.details.exe.clone().unwrap_or_default(),
                     Style::default(),
                 ),
             ]),
             Spans::from(vec![
-                Span::styled("established tcp conns: ", label_style),
+                Styled::label_span("established tcp conns: "),
                 Span::styled(
                     self.details
                         .tcp_conns()
@@ -164,7 +162,7 @@ impl ProcessDetailsView {
                 ),
             ]),
             Spans::from(vec![
-                Span::styled("established udp conns: ", label_style),
+                Styled::label_span("established udp conns: "),
                 Span::styled(
                     self.details
                         .udp_conns()

@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::time::{Duration, Instant};
 use std::{io, sync::Arc};
 
@@ -21,11 +22,13 @@ use crate::clock::{ClockNano, Timestamp};
 use crate::store::{Interest, Store};
 
 use self::process_details::ProcessDetailsView;
+use self::remote_ip_details::RemoteIpDetailsView;
 use self::socktable::{SocketTableConfig, SocketTableView};
 use self::traffic_sparkline::TrafficSparklineView;
 
 mod format;
 mod process_details;
+mod remote_ip_details;
 mod socktable;
 mod styles;
 mod traffic_sparkline;
@@ -55,6 +58,7 @@ enum UiEvent {
     Change,
     Back,
     SelectProcess(u32),
+    SelectRemoteIp(IpAddr),
 }
 
 async fn run_app<B: Backend>(
@@ -157,28 +161,31 @@ trait View {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Filter {
     #[default]
-    NoFilter,
+    None,
     Process(u32),
+    RemoteIp(IpAddr),
 }
 
 impl Filter {
-    fn interest(self) -> Interest {
+    pub(crate) fn interest(self) -> Interest {
         match self {
+            Self::None => Interest::All,
             Self::Process(pid) => Interest::Pid(pid),
-            Self::NoFilter => Interest::All,
+            Self::RemoteIp(ip) => Interest::RemoteIp(ip),
         }
     }
 }
 
 #[derive(Debug)]
 enum RootView {
-    MainView(MainView),
-    ProcessView(ProcessView),
+    Main(MainView),
+    Process(ProcessView),
+    RemoteIp(RemoteIpView),
 }
 
 impl Default for RootView {
     fn default() -> Self {
-        Self::MainView(MainView::default())
+        Self::Main(MainView::default())
     }
 }
 
@@ -186,16 +193,18 @@ impl View for RootView {
     #[inline]
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         match self {
-            RootView::MainView(inner) => inner.handle_event(event),
-            RootView::ProcessView(inner) => inner.handle_event(event),
+            RootView::Main(inner) => inner.handle_event(event),
+            RootView::Process(inner) => inner.handle_event(event),
+            RootView::RemoteIp(inner) => inner.handle_event(event),
         }
     }
 
     #[inline]
     fn render<B: Backend>(&mut self, f: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
         match self {
-            RootView::MainView(inner) => inner.render(f, rect, ctx),
-            RootView::ProcessView(inner) => inner.render(f, rect, ctx),
+            RootView::Main(inner) => inner.render(f, rect, ctx),
+            RootView::Process(inner) => inner.render(f, rect, ctx),
+            RootView::RemoteIp(inner) => inner.render(f, rect, ctx),
         }
     }
 }
@@ -239,7 +248,7 @@ impl Default for Ui {
             dirty: true,
             filter: Filter::default(),
             #[allow(clippy::box_default)]
-            view: RootView::MainView(MainView::default()),
+            view: RootView::Main(MainView::default()),
             footer: FooterBar::default(),
         }
     }
@@ -262,11 +271,14 @@ impl Ui {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         if let Some(ui_event) = self.view.handle_event(event) {
             match ui_event {
+                UiEvent::SelectRemoteIp(ip) => {
+                    self.update_filter(Filter::RemoteIp(ip));
+                }
                 UiEvent::SelectProcess(pid) => {
                     self.update_filter(Filter::Process(pid));
                 }
                 UiEvent::Back => {
-                    self.update_filter(Filter::NoFilter);
+                    self.update_filter(Filter::None);
                 }
                 _ => {}
             }
@@ -305,8 +317,9 @@ impl Ui {
     fn update_view(&mut self) {
         self.view = match self.filter {
             #[allow(clippy::box_default)]
-            Filter::NoFilter => RootView::MainView(MainView::default()),
-            Filter::Process(pid) => RootView::ProcessView(ProcessView::new(pid)),
+            Filter::None => RootView::Main(MainView::default()),
+            Filter::Process(pid) => RootView::Process(ProcessView::new(pid)),
+            Filter::RemoteIp(ipaddr) => RootView::RemoteIp(RemoteIpView::new(ipaddr)),
         }
     }
 }
@@ -335,6 +348,12 @@ impl View for MainView {
                         .selected_pid()
                         .map(UiEvent::SelectProcess)
                 }
+                KeyCode::Char('r') => {
+                    return self
+                        .sock_table_view
+                        .selected()
+                        .map(|entry| UiEvent::SelectRemoteIp(entry.socket.remote.ip()))
+                }
                 _ => {}
             }
         }
@@ -350,6 +369,76 @@ impl View for MainView {
         self.traffic_sparkline_view.render(frame, rects[0], ctx);
 
         self.sock_table_view.render(frame, rects[1], ctx);
+    }
+}
+
+#[derive(Debug)]
+struct RemoteIpView {
+    remote_ip_details_view: RemoteIpDetailsView,
+    traffic_sparkline_view: TrafficSparklineView,
+    sock_table_view: SocketTableView,
+}
+
+impl RemoteIpView {
+    fn new(ipaddr: IpAddr) -> Self {
+        let socket_table = SocketTableConfig::default()
+            .filter(Filter::RemoteIp(ipaddr))
+            .build();
+
+        Self {
+            remote_ip_details_view: RemoteIpDetailsView::new(ipaddr),
+            traffic_sparkline_view: TrafficSparklineView::with_filter(Filter::RemoteIp(ipaddr)),
+            sock_table_view: SocketTableView::new(socket_table),
+        }
+    }
+}
+
+impl View for RemoteIpView {
+    fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
+        if let Event::Key(key) = event {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Backspace => {
+                    return UiEvent::Back.into();
+                }
+
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.sock_table_view.up();
+                    return UiEvent::Change.into();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.sock_table_view.down();
+                    return UiEvent::Change.into();
+                }
+                KeyCode::Char('p') | KeyCode::Enter => {
+                    return self
+                        .sock_table_view
+                        .selected_pid()
+                        .map(UiEvent::SelectProcess)
+                }
+                _ => {}
+            }
+        }
+
+        None
+    }
+
+    fn render<B: Backend>(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
+        let rects = Layout::default()
+            .constraints(
+                [
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(15),
+                    Constraint::Percentage(70),
+                ]
+                .as_ref(),
+            )
+            .split(rect);
+
+        self.remote_ip_details_view.render(frame, rects[0], ctx);
+
+        self.traffic_sparkline_view.render(frame, rects[1], ctx);
+
+        self.sock_table_view.render(frame, rects[2], ctx);
     }
 }
 
@@ -389,6 +478,12 @@ impl View for ProcessView {
                 KeyCode::Down | KeyCode::Char('j') => {
                     self.sock_table_view.down();
                     return UiEvent::Change.into();
+                }
+                KeyCode::Char('r') => {
+                    return self
+                        .sock_table_view
+                        .selected()
+                        .map(|entry| UiEvent::SelectRemoteIp(entry.socket.remote.ip()))
                 }
                 _ => {}
             }

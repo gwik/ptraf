@@ -25,6 +25,18 @@ pub enum Interest {
     All,
 }
 
+impl Interest {
+    pub fn interests_from_msg(msg: &SockMsgEvent) -> [Interest; 5] {
+        [
+            Interest::Pid(msg.pid),
+            Interest::LocalSocket(msg.local_sock_addr()),
+            Interest::RemoteSocket(msg.remote_sock_addr()),
+            Interest::RemoteIp(msg.remote_addr.into()),
+            Interest::All,
+        ]
+    }
+}
+
 #[derive(Debug, Default)]
 struct Traffic {
     size: AtomicU64,
@@ -117,24 +129,24 @@ impl Metrics {
     }
 }
 
-impl Interest {
-    pub fn interests_from_msg(msg: &SockMsgEvent) -> [Interest; 5] {
-        [
-            Interest::Pid(msg.pid),
-            Interest::LocalSocket(msg.local_sock_addr()),
-            Interest::RemoteSocket(msg.remote_sock_addr()),
-            Interest::RemoteIp(msg.remote_addr.into()),
-            Interest::All,
-        ]
-    }
-}
-
 #[derive(Copy, Clone, Eq, Debug)]
 pub struct Socket {
     pub pid: u32,
     pub local: SocketAddr,
     pub remote: SocketAddr,
     pub sock_type: SockType,
+}
+
+impl Socket {
+    pub fn match_interest(&self, interest: Interest) -> bool {
+        match interest {
+            Interest::RemoteIp(ip) => ip == self.remote.ip(),
+            Interest::RemoteSocket(sock) => sock == self.remote,
+            Interest::LocalSocket(sock) => sock == self.remote,
+            Interest::Pid(pid) => pid == self.pid,
+            Interest::All => true,
+        }
+    }
 }
 
 impl From<&SockMsgEvent> for Socket {

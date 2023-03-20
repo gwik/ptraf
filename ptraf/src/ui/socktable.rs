@@ -64,7 +64,7 @@ impl SocketTableConfig {
 #[derive(Debug)]
 pub(crate) struct SocketTable {
     filter: Filter,
-    dataset: Vec<DataPoint>,
+    dataset: Vec<Entry>,
     rate_collection_range: Option<Range<Timestamp>>,
     config: SocketTableConfig, // Remove this
 }
@@ -89,7 +89,7 @@ impl SocketTable {
         &self.config
     }
 
-    pub fn dataset(&self) -> &[DataPoint] {
+    pub fn dataset(&self) -> &[Entry] {
         &self.dataset
     }
 
@@ -126,7 +126,7 @@ impl SocketTable {
 }
 
 #[derive(Debug, Clone)]
-pub struct DataPoint {
+pub(crate) struct Entry {
     pub socket: Socket,
     pub stat: Stat,
     pub last_activity: SystemTime,
@@ -137,7 +137,7 @@ pub struct DataPoint {
 #[derive(Debug)]
 struct SocketTableCollector {
     filter: Filter,
-    socket_cache: HashMap<SocketAddr, DataPoint, fxhash::FxBuildHasher>,
+    socket_cache: HashMap<SocketAddr, Entry, fxhash::FxBuildHasher>,
     oldest_segment_ts: Option<Timestamp>,
     oldest_rate_segment_ts: Option<Timestamp>,
     rate_until: Timestamp,
@@ -154,7 +154,7 @@ impl SocketTableCollector {
         }
     }
 
-    fn into_dataset(self, _ts: Timestamp) -> Vec<DataPoint> {
+    fn into_dataset(self, _ts: Timestamp) -> Vec<Entry> {
         self.socket_cache.into_values().collect()
     }
 
@@ -165,10 +165,11 @@ impl SocketTableCollector {
             self.oldest_rate_segment_ts.replace(time_segment.ts);
         }
 
+        let interest = self.filter.interest();
+
         time_segment.segment.for_each_socket(|socket| {
-            match self.filter {
-                Filter::Process(pid) if socket.pid != pid => return,
-                _ => {}
+            if !socket.match_interest(interest) {
+                return;
             }
 
             let stat = time_segment
@@ -184,7 +185,7 @@ impl SocketTableCollector {
                         datapoint.rate_stat.merge(&stat);
                     }
                 })
-                .or_insert_with(|| DataPoint {
+                .or_insert_with(|| Entry {
                     socket: *socket,
                     stat,
                     last_activity: clock.wall_time(time_segment.ts),
@@ -268,6 +269,12 @@ impl SocketTableView {
                 .get(selected)
                 .map(|item| item.pid)
         })
+    }
+
+    pub(super) fn selected(&self) -> Option<&Entry> {
+        self.table_state
+            .selected()
+            .and_then(|selected| self.socket_table.dataset().get(selected))
     }
 
     pub(super) fn render<B: Backend>(
