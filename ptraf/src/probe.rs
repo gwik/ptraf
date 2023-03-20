@@ -43,7 +43,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use aya::maps::perf::AsyncPerfEventArray;
-use aya::programs::{KProbe, TracePoint};
+use aya::programs::{KProbe, ProgramError, TracePoint};
 use aya::util::online_cpus;
 use aya::{include_bytes_aligned, Bpf};
 use aya_log::BpfLogger;
@@ -55,6 +55,13 @@ use tokio::task::JoinSet;
 /// The probing eBPF program.
 pub struct ProbeProgram {
     bpf: Bpf,
+}
+
+fn run_inet_sock_set_state(bpf: &mut Bpf) -> Result<(), ProgramError> {
+    let tracepoint: &mut TracePoint = bpf.program_mut("sock_set_state").unwrap().try_into()?;
+    tracepoint.load()?;
+    tracepoint.attach("sock", "inet_sock_set_state")?;
+    Ok(())
 }
 
 impl ProbeProgram {
@@ -87,11 +94,12 @@ impl ProbeProgram {
         ret_probe.load()?;
         ret_probe.attach("sock_recvmsg", 0)?;
 
-        // TODO(gwik): check the tracepoint is enabled
-
-        let probe: &mut TracePoint = bpf.program_mut("sock_set_state").unwrap().try_into()?;
-        probe.load()?;
-        probe.attach("sock", "inet_sock_set_state")?;
+        if let Err(error) = run_inet_sock_set_state(&mut bpf) {
+            warn!(
+                "couldn't load sock:inet_sock_set_state tracepoint: {}",
+                error
+            );
+        }
 
         trace!("probe program loaded");
 
