@@ -123,10 +123,8 @@ impl View for FilterView {
             input => {
                 if self.textarea.input(input) {
                     self.update();
-                    UiEvent::Change.into()
-                } else {
-                    None
                 }
+                UiEvent::Change.into()
             }
         }
     }
