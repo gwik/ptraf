@@ -1,10 +1,11 @@
-use peg::{error::ParseError, str::LineCol};
+pub use peg::{error::ParseError, str::LineCol};
 
 use crate::{
     frontend::{parser, Expr},
     Filterable,
 };
 
+#[derive(Debug)]
 pub struct Interpretor {
     ast: Expr,
 }
@@ -25,7 +26,7 @@ impl Interpretor {
     fn eval<F: Filterable>(f: &F, o: &Expr) -> bool {
         match o {
             Expr::Pid(pid) => f.pid() == *pid,
-            Expr::Protocol(p) => f.protocol() == *p,
+            Expr::Protocol(p) => f.protocol().map(|fp| fp == *p).unwrap_or(false),
             Expr::IpVersion(v) => f.ip_version() == *v,
             Expr::Addr(addr) => &f.local_address() == addr || &f.remote_address() == addr,
             Expr::LocalAddr(addr) => &f.local_address() == addr,
@@ -79,8 +80,8 @@ mod tests {
             self.pid
         }
 
-        fn protocol(&self) -> Protocol {
-            self.protocol
+        fn protocol(&self) -> Option<Protocol> {
+            Some(self.protocol)
         }
 
         fn ip_version(&self) -> IpVersion {

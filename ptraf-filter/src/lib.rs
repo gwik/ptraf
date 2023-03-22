@@ -9,7 +9,7 @@ pub use interpretor::*;
 pub trait Filterable {
     fn pid(&self) -> u32;
 
-    fn protocol(&self) -> Protocol;
+    fn protocol(&self) -> Option<Protocol>;
 
     fn ip_version(&self) -> IpVersion;
 

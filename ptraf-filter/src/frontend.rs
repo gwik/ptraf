@@ -14,6 +14,9 @@ pub enum IpVersion {
     IpV6,
 }
 
+// TODO(gwik): Make it no_std to push down filter to BPF
+// TODO(gwik): Add netmask support
+
 /// The expression of the filter language.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expr {
