@@ -1,2 +1,2 @@
 [workspace]
-members = ["ptraf", "ptraf-common", "xtask"]
+members = ["ptraf", "ptraf-common", "xtask", "ptraf-filter"]
