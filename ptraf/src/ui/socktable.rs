@@ -5,10 +5,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crossterm::event::{Event, KeyCode, KeyEvent};
+use env_logger::filter;
 use human_repr::HumanDuration;
+use ptraf_filter::Interpretor;
 use tui::{
     backend::Backend,
-    layout::{Constraint, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     widgets::{Cell, Row, Table, TableState},
     Frame,
@@ -19,7 +22,7 @@ use crate::{
     store::{Interest, Socket, Stat, Store, TimeSegment},
 };
 
-use super::{format::Formatter, Filter, UiContext};
+use super::{filter_editor::FilterView, format::Formatter, Filter, UiContext, UiEvent, View};
 
 #[derive(Debug)]
 pub(crate) struct SocketTableConfig {
@@ -97,7 +100,13 @@ impl SocketTable {
         self.rate_collection_range.as_ref()
     }
 
-    pub fn collect(&mut self, ts: Timestamp, clock: &ClockNano, store: &Store) {
+    pub fn collect(
+        &mut self,
+        ts: Timestamp,
+        clock: &ClockNano,
+        store: &Store,
+        filter_interpretor: Option<&ptraf_filter::Interpretor>,
+    ) {
         let window = store.window();
 
         let ts = ts.trunc(window);
@@ -108,7 +117,7 @@ impl SocketTable {
                 .into();
         let rate_until = rate_until.trunc(window);
 
-        let mut collector = SocketTableCollector::new(self.filter, rate_until);
+        let mut collector = SocketTableCollector::new(self.filter, filter_interpretor, rate_until);
 
         store
             .segments_view()
@@ -135,18 +144,24 @@ pub(crate) struct Entry {
 }
 
 #[derive(Debug)]
-struct SocketTableCollector {
+struct SocketTableCollector<'a> {
     filter: Filter,
+    filter_interpretor: Option<&'a Interpretor>,
     socket_cache: HashMap<SocketAddr, Entry, fxhash::FxBuildHasher>,
     oldest_segment_ts: Option<Timestamp>,
     oldest_rate_segment_ts: Option<Timestamp>,
     rate_until: Timestamp,
 }
 
-impl SocketTableCollector {
-    fn new(filter: Filter, rate_until: Timestamp) -> Self {
+impl<'a> SocketTableCollector<'a> {
+    fn new(
+        filter: Filter,
+        filter_interpretor: Option<&'a Interpretor>,
+        rate_until: Timestamp,
+    ) -> Self {
         Self {
             filter,
+            filter_interpretor,
             socket_cache: HashMap::default(),
             oldest_segment_ts: None,
             oldest_rate_segment_ts: None,
@@ -169,6 +184,14 @@ impl SocketTableCollector {
 
         time_segment.segment.for_each_socket(|socket| {
             if !socket.match_interest(interest) {
+                return;
+            }
+
+            if !self
+                .filter_interpretor
+                .map(|inter| inter.filter(socket))
+                .unwrap_or(true)
+            {
                 return;
             }
 
@@ -204,6 +227,7 @@ impl SocketTableCollector {
 pub(super) struct SocketTableView {
     socket_table: SocketTable,
     table_state: TableState,
+    filter_view: FilterView,
 }
 
 impl Default for SocketTableView {
@@ -212,6 +236,7 @@ impl Default for SocketTableView {
         Self {
             socket_table,
             table_state: TableState::default(),
+            filter_view: FilterView::default(),
         }
     }
 }
@@ -221,6 +246,7 @@ impl SocketTableView {
         Self {
             socket_table,
             table_state: TableState::default(),
+            filter_view: FilterView::default(),
         }
     }
 
@@ -276,15 +302,31 @@ impl SocketTableView {
             .selected()
             .and_then(|selected| self.socket_table.dataset().get(selected))
     }
+}
 
-    pub(super) fn render<B: Backend>(
-        &mut self,
-        frame: &mut Frame<B>,
-        rect: Rect,
-        ctx: &UiContext<'_>,
-    ) {
+impl View for SocketTableView {
+    fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
+        if self.filter_view.is_active() {
+            self.filter_view.handle_event(event)
+        } else {
+            #[allow(clippy::single_match)]
+            match event {
+                Event::Key(KeyEvent {
+                    code: KeyCode::Char('/'),
+                    ..
+                }) => {
+                    self.filter_view.set_active();
+                    UiEvent::Change.into()
+                }
+                _ => None,
+            }
+        }
+    }
+
+    fn render<B: Backend>(&mut self, frame: &mut Frame<B>, rect: Rect, ctx: &UiContext<'_>) {
         if !ctx.paused {
-            self.socket_table.collect(ctx.ts, ctx.clock, ctx.store);
+            self.socket_table
+                .collect(ctx.ts, ctx.clock, ctx.store, self.filter_view.interpretor());
         }
 
         let now = SystemTime::now();
@@ -346,7 +388,16 @@ impl SocketTableView {
                 Constraint::Percentage(10),
                 Constraint::Percentage(10),
             ]);
-        frame.render_stateful_widget(t, rect, &mut self.table_state);
+
+        let rects = Layout::default()
+            .constraints(vec![
+                Constraint::Length(3),
+                Constraint::Length(rect.height.saturating_sub(3)),
+            ])
+            .split(rect);
+
+        self.filter_view.render(frame, rects[0], ctx);
+        frame.render_stateful_widget(t, rects[1], &mut self.table_state);
     }
 }
 

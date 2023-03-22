@@ -26,6 +26,7 @@ use self::remote_ip_details::RemoteIpDetailsView;
 use self::socktable::{SocketTableConfig, SocketTableView};
 use self::traffic_sparkline::TrafficSparklineView;
 
+mod filter_editor;
 mod format;
 mod process_details;
 mod remote_ip_details;
@@ -332,6 +333,9 @@ struct MainView {
 
 impl View for MainView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
+        if let Some(ui_event) = self.sock_table_view.handle_event(event) {
+            return Some(ui_event);
+        }
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {

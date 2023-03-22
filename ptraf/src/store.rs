@@ -11,8 +11,10 @@ use std::{
 };
 
 use dashmap::{DashMap, DashSet};
+use dns_lookup::Protocol;
 use fxhash::FxBuildHasher;
 use ptraf_common::{Channel, SockMsgEvent, SockType};
+use ptraf_filter::Filterable;
 
 use crate::clock::Timestamp;
 
@@ -169,6 +171,44 @@ impl PartialEq for Socket {
 impl Hash for Socket {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.local.hash(state);
+    }
+}
+
+impl Filterable for Socket {
+    fn pid(&self) -> u32 {
+        todo!()
+    }
+
+    fn protocol(&self) -> Option<ptraf_filter::Protocol> {
+        match self.sock_type {
+            SockType::Stream => ptraf_filter::Protocol::Tcp.into(),
+            SockType::Dgram => ptraf_filter::Protocol::Udp.into(),
+            _ => None,
+        }
+    }
+
+    fn ip_version(&self) -> ptraf_filter::IpVersion {
+        if self.local.is_ipv4() {
+            ptraf_filter::IpVersion::IpV4
+        } else {
+            ptraf_filter::IpVersion::IpV6
+        }
+    }
+
+    fn local_address(&self) -> IpAddr {
+        self.local.ip()
+    }
+
+    fn remote_address(&self) -> IpAddr {
+        self.remote.ip()
+    }
+
+    fn local_port(&self) -> u16 {
+        self.local.port()
+    }
+
+    fn remote_port(&self) -> u16 {
+        self.remote.port()
     }
 }
 

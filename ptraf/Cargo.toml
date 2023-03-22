@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 # local
 ptraf-common = { path = "../ptraf-common", features = ["user"] }
+ptraf-filter = { path = "../ptraf-filter" }
 
 # remote
 anyhow = "1.0.68"
@@ -27,6 +28,7 @@ log = { version = "0.4", features = ["std"] }
 procfs = "0.15.1"
 tokio = { version = "1.24", features = ["macros", "rt", "rt-multi-thread", "net", "signal", "sync", "time"] }
 tui = "0.19"
+tui-textarea = "0.2.0"
 
 [[bin]]
 name = "ptraf"
