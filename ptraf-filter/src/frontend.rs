@@ -32,6 +32,13 @@ pub enum Expr {
 
     And(Box<Expr>, Box<Expr>),
     Or(Box<Expr>, Box<Expr>),
+    Not(Box<Expr>),
+}
+
+macro_rules! b {
+    ($exp: expr) => {
+        Box::new($exp)
+    };
 }
 
 peg::parser!(pub grammar parser() for str {
@@ -88,11 +95,14 @@ peg::parser!(pub grammar parser() for str {
         = n:$(['0'..='9' | 'a'..='f' | 'A'..='F' | ':' | '.' ]+) {? n.parse::<IpAddr>().or(Err("invalid ip address")).map(Into::into) }
 
     rule logic() -> Expr = precedence!{
-      a:(@) _ "or" _ b:@ { Expr::Or(Box::new(a), Box::new(b)) }
-      a:(@) _ "and" _ b:@ { Expr::And(Box::new(a), Box::new(b)) }
-      --
-      s: operand() { s }
-      "(" _ e:logic() _ ")" { e }
+        a:(@) _ ("or" / "||") _ b:@ { Expr::Or(b!(a), b!(b)) }
+        a:(@) _ ("and" / "&&") _ b:@ { Expr::And(b!(a), b!(b)) }
+        --
+        ("not" / "!") _ e:operand() _ { Expr::Not(b!(e)) }
+        ("not" / "!") _ "(" _ e:logic() _ ")" _ { Expr::Not(b!(e)) }
+        --
+        s:operand() { s }
+        "(" _ e:logic() _ ")" { e }
     }
 
     rule _() =  quiet!{[' ' | '\t']*}
@@ -171,33 +181,66 @@ mod tests {
         assert_parse!(
             "(pid[3221] or tcp) and ipv4",
             Expr::And(
-                Box::new(Expr::Or(
-                    Box::new(Expr::Pid(3221)),
-                    Box::new(Expr::Protocol(Protocol::Tcp))
+                b!(Expr::Or(
+                    b!(Expr::Pid(3221)),
+                    b!(Expr::Protocol(Protocol::Tcp))
                 )),
-                Box::new(Expr::IpVersion(IpVersion::IpV4))
+                b!(Expr::IpVersion(IpVersion::IpV4))
             )
         );
 
         assert_parse!(
             "pid[3221] or tcp and ipv4",
             Expr::And(
-                Box::new(Expr::Or(
-                    Box::new(Expr::Pid(3221)),
-                    Box::new(Expr::Protocol(Protocol::Tcp))
+                b!(Expr::Or(
+                    b!(Expr::Pid(3221)),
+                    b!(Expr::Protocol(Protocol::Tcp))
                 )),
-                Box::new(Expr::IpVersion(IpVersion::IpV4))
+                b!(Expr::IpVersion(IpVersion::IpV4))
             )
         );
 
         assert_parse!(
             "pid[3221] and tcp or ipv4",
             Expr::Or(
-                Box::new(Expr::And(
-                    Box::new(Expr::Pid(3221)),
-                    Box::new(Expr::Protocol(Protocol::Tcp))
+                b!(Expr::And(
+                    b!(Expr::Pid(3221)),
+                    b!(Expr::Protocol(Protocol::Tcp))
                 )),
-                Box::new(Expr::IpVersion(IpVersion::IpV4))
+                b!(Expr::IpVersion(IpVersion::IpV4))
+            )
+        );
+
+        assert_parse!(
+            "pid[3221] && tcp || ipv4",
+            Expr::Or(
+                b!(Expr::And(
+                    b!(Expr::Pid(3221)),
+                    b!(Expr::Protocol(Protocol::Tcp))
+                )),
+                b!(Expr::IpVersion(IpVersion::IpV4))
+            )
+        );
+
+        assert_parse!(
+            "pid[3221] and not tcp or ipv4",
+            Expr::Or(
+                b!(Expr::And(
+                    b!(Expr::Pid(3221)),
+                    b!(Expr::Not(b!(Expr::Protocol(Protocol::Tcp)))),
+                )),
+                b!(Expr::IpVersion(IpVersion::IpV4))
+            )
+        );
+
+        assert_parse!(
+            "pid[3221] and not (tcp or ipv4)",
+            Expr::And(
+                b!(Expr::Pid(3221)),
+                b!(Expr::Not(b!(Expr::Or(
+                    b!(Expr::Protocol(Protocol::Tcp)),
+                    b!(Expr::IpVersion(IpVersion::IpV4)),
+                )))),
             )
         );
     }
