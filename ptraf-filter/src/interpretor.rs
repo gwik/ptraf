@@ -5,13 +5,15 @@ use crate::{
     Filterable,
 };
 
-#[derive(Debug)]
+pub type Error = ParseError<LineCol>;
+
+#[derive(Debug, Clone)]
 pub struct Interpretor {
     ast: Expr,
 }
 
 impl Interpretor {
-    pub fn parse(input: &str) -> Result<Self, ParseError<LineCol>> {
+    pub fn parse(input: &str) -> Result<Self, Error> {
         parser::filter(input).map(|expr| Self { ast: expr })
     }
 
