@@ -67,6 +67,8 @@ fn run_inet_sock_set_state(bpf: &mut Bpf) -> Result<(), ProgramError> {
 impl ProbeProgram {
     /// Loads the program into the kernel and attaches different probes.
     pub fn load() -> Result<Self, anyhow::Error> {
+        trace!("loading bpf program");
+
         #[cfg(debug_assertions)]
         let mut bpf = Bpf::load(include_bytes_aligned!(
             "../../target/bpfel-unknown-none/debug/ptraf"
@@ -80,6 +82,8 @@ impl ProbeProgram {
             // This can happen if you remove all log statements from your eBPF program.
             warn!("failed to initialize eBPF logger: {}", e);
         }
+
+        trace!("initialize BPF programs");
 
         let probe: &mut KProbe = bpf.program_mut("msg").unwrap().try_into()?;
         probe.load()?;
@@ -129,6 +133,8 @@ impl ProbeProgram {
     {
         let mut join_set = JoinSet::new();
         let f = Arc::new(f);
+
+        trace!("creating async perf event array");
 
         // Create an `AsyncPerfEventArray` for reading events.
         let mut perf_array = AsyncPerfEventArray::try_from(self.bpf.map_mut("EVENTS")?)?;

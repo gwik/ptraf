@@ -52,6 +52,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let store = Store::new(segment_interval, segment_count);
     let app = Arc::new(App::new(clock, store));
 
+    let program = ProbeProgram::load()?;
+    info!("BPF program loaded");
+
     let ui_handle = {
         let app = Arc::clone(&app);
         tokio::spawn(run_ui(
@@ -60,8 +63,6 @@ async fn main() -> Result<(), anyhow::Error> {
         ))
     };
 
-    let program = ProbeProgram::load()?;
-    info!("BPF program loaded");
     let mut join_set = program
         .events(args.msg_buffer_capacity, move |events, _cpu_id| {
             let ts = app.clock().now();
