@@ -6,7 +6,6 @@ use std::{
 };
 
 use crossterm::event::{Event, KeyCode, KeyEvent};
-use env_logger::filter;
 use human_repr::HumanDuration;
 use ptraf_filter::Interpretor;
 use tui::{
@@ -22,7 +21,9 @@ use crate::{
     store::{Interest, Socket, Stat, Store, TimeSegment},
 };
 
-use super::{filter_editor::FilterView, format::Formatter, Filter, UiContext, UiEvent, View};
+use super::{
+    filter_editor::FilterView, format::Formatter, CustomFilter, Filter, UiContext, UiEvent, View,
+};
 
 #[derive(Debug)]
 pub(crate) struct SocketTableConfig {
@@ -242,11 +243,11 @@ impl Default for SocketTableView {
 }
 
 impl SocketTableView {
-    pub(super) fn new(socket_table: SocketTable) -> Self {
+    pub(super) fn new(socket_table: SocketTable, filter: Option<&CustomFilter>) -> Self {
         Self {
             socket_table,
             table_state: TableState::default(),
-            filter_view: FilterView::default(),
+            filter_view: FilterView::with_filter(filter),
         }
     }
 
@@ -306,7 +307,7 @@ impl SocketTableView {
 
 impl View for SocketTableView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
-        if self.filter_view.is_active() {
+        if self.filter_view.is_editing() {
             self.filter_view.handle_event(event)
         } else {
             #[allow(clippy::single_match)]
@@ -315,7 +316,7 @@ impl View for SocketTableView {
                     code: KeyCode::Char('/'),
                     ..
                 }) => {
-                    self.filter_view.set_active();
+                    self.filter_view.set_editing();
                     UiEvent::Change.into()
                 }
                 _ => None,

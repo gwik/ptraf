@@ -8,6 +8,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::stream::StreamExt;
+use ptraf_filter::Interpretor;
 use tui::layout::Rect;
 use tui::style::Style;
 use tui::text::{Span, Spans};
@@ -60,6 +61,7 @@ enum UiEvent {
     Back,
     SelectProcess(u32),
     SelectRemoteIp(IpAddr),
+    SetCustomFilter(Option<CustomFilter>),
 }
 
 async fn run_app<B: Backend>(
@@ -210,10 +212,17 @@ impl View for RootView {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CustomFilter {
+    content: String,
+    interpretor: Interpretor,
+}
+
 struct Ui {
     paused: bool,
     dirty: bool,
     filter: Filter,
+    custom_filter: Option<CustomFilter>,
     view: RootView,
     footer: FooterBar,
 }
@@ -248,6 +257,7 @@ impl Default for Ui {
             paused: false,
             dirty: true,
             filter: Filter::default(),
+            custom_filter: None,
             #[allow(clippy::box_default)]
             view: RootView::Main(MainView::default()),
             footer: FooterBar::default(),
@@ -271,6 +281,8 @@ impl Ui {
 
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         if let Some(ui_event) = self.view.handle_event(event) {
+            self.dirty = true;
+
             match ui_event {
                 UiEvent::SelectRemoteIp(ip) => {
                     self.update_filter(Filter::RemoteIp(ip));
@@ -281,11 +293,12 @@ impl Ui {
                 UiEvent::Back => {
                     self.update_filter(Filter::None);
                 }
-                _ => {}
+                UiEvent::SetCustomFilter(filter) => {
+                    self.custom_filter = filter
+                }
+                _ => return ui_event.into(),
             }
-
-            self.dirty = true;
-            return ui_event.into();
+            return None;
         }
 
         if let Event::Key(key) = event {
@@ -318,9 +331,13 @@ impl Ui {
     fn update_view(&mut self) {
         self.view = match self.filter {
             #[allow(clippy::box_default)]
-            Filter::None => RootView::Main(MainView::default()),
-            Filter::Process(pid) => RootView::Process(ProcessView::new(pid)),
-            Filter::RemoteIp(ipaddr) => RootView::RemoteIp(RemoteIpView::new(ipaddr)),
+            Filter::None => RootView::Main(MainView::new(self.custom_filter.as_ref())),
+            Filter::Process(pid) => {
+                RootView::Process(ProcessView::new(pid, self.custom_filter.as_ref()))
+            }
+            Filter::RemoteIp(ipaddr) => {
+                RootView::RemoteIp(RemoteIpView::new(ipaddr, self.custom_filter.as_ref()))
+            }
         }
     }
 }
@@ -331,11 +348,24 @@ struct MainView {
     sock_table_view: SocketTableView,
 }
 
+impl MainView {
+    fn new(custom_filter: Option<&CustomFilter>) -> Self {
+        Self {
+            traffic_sparkline_view: TrafficSparklineView::default(),
+            sock_table_view: SocketTableView::new(
+                SocketTableConfig::default().build(),
+                custom_filter,
+            ),
+        }
+    }
+}
+
 impl View for MainView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
         if let Some(ui_event) = self.sock_table_view.handle_event(event) {
             return Some(ui_event);
         }
+
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -384,7 +414,7 @@ struct RemoteIpView {
 }
 
 impl RemoteIpView {
-    fn new(ipaddr: IpAddr) -> Self {
+    fn new(ipaddr: IpAddr, custom_filter: Option<&CustomFilter>) -> Self {
         let socket_table = SocketTableConfig::default()
             .filter(Filter::RemoteIp(ipaddr))
             .build();
@@ -392,13 +422,17 @@ impl RemoteIpView {
         Self {
             remote_ip_details_view: RemoteIpDetailsView::new(ipaddr),
             traffic_sparkline_view: TrafficSparklineView::with_filter(Filter::RemoteIp(ipaddr)),
-            sock_table_view: SocketTableView::new(socket_table),
+            sock_table_view: SocketTableView::new(socket_table, custom_filter),
         }
     }
 }
 
 impl View for RemoteIpView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
+        if let Some(ui_event) = self.sock_table_view.handle_event(event) {
+            return Some(ui_event);
+        }
+
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Backspace => {
@@ -454,7 +488,7 @@ struct ProcessView {
 }
 
 impl ProcessView {
-    fn new(pid: u32) -> Self {
+    fn new(pid: u32, custom_filter: Option<&CustomFilter>) -> Self {
         let socket_table = SocketTableConfig::default()
             .filter(Filter::Process(pid))
             .build();
@@ -462,13 +496,17 @@ impl ProcessView {
         Self {
             process_details_view: ProcessDetailsView::new(pid),
             traffic_sparkline_view: TrafficSparklineView::with_filter(Filter::Process(pid)),
-            sock_table_view: SocketTableView::new(socket_table),
+            sock_table_view: SocketTableView::new(socket_table, custom_filter),
         }
     }
 }
 
 impl View for ProcessView {
     fn handle_event(&mut self, event: &Event) -> Option<UiEvent> {
+        if let Some(ui_event) = self.sock_table_view.handle_event(event) {
+            return Some(ui_event);
+        }
+
         if let Event::Key(key) = event {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Backspace => {
