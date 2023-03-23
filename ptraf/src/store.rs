@@ -175,7 +175,7 @@ impl Hash for Socket {
 
 impl Filterable for Socket {
     fn pid(&self) -> u32 {
-        todo!()
+        self.pid
     }
 
     fn protocol(&self) -> Option<ptraf_filter::Protocol> {
