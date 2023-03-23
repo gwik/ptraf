@@ -11,7 +11,6 @@ use std::{
 };
 
 use dashmap::{DashMap, DashSet};
-use dns_lookup::Protocol;
 use fxhash::FxBuildHasher;
 use ptraf_common::{Channel, SockMsgEvent, SockType};
 use ptraf_filter::Filterable;
