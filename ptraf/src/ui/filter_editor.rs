@@ -44,7 +44,7 @@ impl FilterView {
         Self {
             committed_state: filter.cloned(),
             draft_interpretor: Ok(None),
-            textarea: TextArea::new(vec![filter.map(|f| f.content.clone()).unwrap_or_default()]),
+            textarea: TextArea::default(),
             editing: false,
         }
     }
@@ -73,6 +73,8 @@ impl FilterView {
             .committed_content()
             .map(ToOwned::to_owned)
             .unwrap_or_default()]);
+
+        self.textarea.move_cursor(tui_textarea::CursorMove::End)
     }
 
     pub(super) fn commit(&mut self) {
@@ -183,8 +185,11 @@ impl View for FilterView {
                 Ok(_) => {
                     self.textarea
                         .set_style(Style::default().fg(Color::LightGreen));
-                    self.textarea
-                        .set_block(Block::default().borders(Borders::ALL).title("OK"));
+                    self.textarea.set_block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("OK - accept: Enter abort: Esc"),
+                    );
                 }
                 Err(err) => {
                     self.textarea
@@ -199,8 +204,11 @@ impl View for FilterView {
         } else {
             self.textarea.set_style(Style::default());
             self.textarea.set_cursor_style(Style::default());
-            self.textarea
-                .set_block(Block::default().borders(Borders::ALL));
+            self.textarea.set_block(
+                Block::default()
+                    .title("Filter (press '/'), ex: \"udp and (rport[443] or rport[80]) and ipv6\"")
+                    .borders(Borders::ALL),
+            );
         }
 
         let layout =
