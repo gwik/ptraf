@@ -149,6 +149,7 @@ struct UiContext<'a> {
     ts: Timestamp,
     store: &'a Store,
     clock: &'a ClockNano,
+    filter_interpretor: Option<&'a Interpretor>,
     paused: bool,
 }
 
@@ -240,6 +241,7 @@ impl Ui {
             clock: app.clock(),
             store: &app.store,
             paused: self.paused,
+            filter_interpretor: self.custom_filter.as_ref().map(|f| &f.interpretor),
         };
 
         let rects = Layout::default()
@@ -293,9 +295,7 @@ impl Ui {
                 UiEvent::Back => {
                     self.update_filter(Filter::None);
                 }
-                UiEvent::SetCustomFilter(filter) => {
-                    self.custom_filter = filter
-                }
+                UiEvent::SetCustomFilter(filter) => self.custom_filter = filter,
                 _ => return ui_event.into(),
             }
             return None;

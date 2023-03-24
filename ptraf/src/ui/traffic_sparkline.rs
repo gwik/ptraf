@@ -10,7 +10,7 @@ use tui::{
 
 use crate::{
     clock::Timestamp,
-    store::{Store, TimeSegment},
+    store::{Interest, Store, TimeSegment},
 };
 
 use super::{format::Formatter, Filter, UiContext};
@@ -37,7 +37,11 @@ impl TrafficSparkline {
         }
     }
 
-    pub(crate) fn collect(&mut self, store: &Store) {
+    pub(crate) fn collect(
+        &mut self,
+        store: &Store,
+        filter_interpretor: Option<&ptraf_filter::Interpretor>,
+    ) {
         // the starting point for data already collected.
         let start = self.dataset.back().map(|dp| dp.ts).unwrap_or_default();
 
@@ -61,16 +65,33 @@ impl TrafficSparkline {
             .rev()
             .take_while(|time_segment| time_segment.ts > start)
             .for_each(|time_segment| {
-                let mut datapoint = DataPoint {
-                    ts: time_segment.ts,
-                    rx: 0,
-                    tx: 0,
+                let datapoint = {
+                    let mut datapoint = DataPoint {
+                        ts: time_segment.ts,
+                        rx: 0,
+                        tx: 0,
+                    };
+
+                    if let Some(interpretor) = filter_interpretor {
+                        time_segment.segment.for_each_socket(|socket| {
+                            if !interpretor.filter(socket) {
+                                return;
+                            }
+
+                            let stat = time_segment
+                                .segment
+                                .stat_by_interest(&Interest::LocalSocket(socket.local));
+
+                            datapoint.rx += stat.as_ref().map(|stat| stat.rx).unwrap_or_default();
+                            datapoint.tx += stat.as_ref().map(|stat| stat.tx).unwrap_or_default();
+                        });
+                    } else {
+                        let stat = time_segment.segment.stat_by_interest(&interest);
+                        datapoint.rx = stat.as_ref().map(|stat| stat.rx).unwrap_or_default();
+                        datapoint.tx = stat.as_ref().map(|stat| stat.tx).unwrap_or_default();
+                    }
+                    datapoint
                 };
-
-                let stat = time_segment.segment.stat_by_interest(&interest);
-                datapoint.rx = stat.as_ref().map(|stat| stat.rx).unwrap_or_default();
-                datapoint.tx = stat.as_ref().map(|stat| stat.tx).unwrap_or_default();
-
                 self.reverse_buffer.push(datapoint);
             });
 
@@ -109,7 +130,7 @@ impl TrafficSparklineView {
         rect: Rect,
         ctx: &UiContext<'_>,
     ) {
-        self.traffic.collect(ctx.store);
+        self.traffic.collect(ctx.store, ctx.filter_interpretor);
 
         let output_interval = Duration::from_secs_f64(
             ctx.store.window().as_secs_f64() * (ctx.store.max_capacity() - 1) as f64
